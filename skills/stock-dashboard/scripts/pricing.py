@@ -83,23 +83,48 @@ def target_price(val_high, resistance, eps) -> dict:
 
 def stop_loss(entry, atr14, prior_low) -> dict:
     entry = float(entry)
-    options = []
+    candidates = []
+    dropped = []
+
     if atr14 is not None:
-        p = entry - ATR_MULTIPLE * float(atr14)
-        if p < entry:
-            options.append(("ATR", p, f"入场 {entry:.2f} 减 {ATR_MULTIPLE:g} 倍 ATR14 {float(atr14):.2f}"))
+        atr_val = float(atr14)
+        p = entry - ATR_MULTIPLE * atr_val
+        formula = f"入场 {entry:.2f} 减 {ATR_MULTIPLE:g} 倍 ATR14 {atr_val:.2f}"
+        if 0 < p < entry:
+            candidates.append(("ATR", p, formula))
         else:
-            raise PricingBlocked(f"ATR14 过小（{float(atr14):.2f}），计算得止损 {p:.2f} 不低于入场 {entry:.2f}，无法形成有效止损")
+            if p <= 0:
+                dropped.append(("ATR", f"计算得止损 {p:.2f}，不大于零"))
+            else:
+                dropped.append(("ATR", f"计算得止损 {p:.2f}，不低于入场 {entry:.2f}"))
+
     if prior_low is not None:
-        p = float(prior_low) * (1 - STRUCTURE_BUFFER)
-        if p < entry:
-            options.append(("结构", p, f"前低 {float(prior_low):.2f} 下方 {STRUCTURE_BUFFER:.0%}"))
+        prior_val = float(prior_low)
+        p = prior_val * (1 - STRUCTURE_BUFFER)
+        formula = f"前低 {prior_val:.2f} 下方 {STRUCTURE_BUFFER:.0%}"
+        if 0 < p < entry:
+            candidates.append(("结构", p, formula))
         else:
-            raise PricingBlocked(f"前低 {float(prior_low):.2f} 高于入场 {entry:.2f}，结构止损无法有效保护头寸，需等前低回落至入场下方")
-    if not options:
-        raise PricingBlocked("ATR14 与前低均缺失，无法推导止损价")
-    method, price, formula = max(options, key=lambda x: x[1])
-    return {"price": round(price, 2), "formula": formula, "method": method}
+            if p <= 0:
+                dropped.append(("结构", f"计算得止损 {p:.2f}，不大于零"))
+            else:
+                dropped.append(("结构", f"计算得止损 {p:.2f}，不低于入场 {entry:.2f}"))
+
+    if not candidates:
+        if dropped:
+            reasons = "；".join(f"{method}：{reason}" for method, reason in dropped)
+            raise PricingBlocked(f"所有止损方法均无效：{reasons}")
+        else:
+            raise PricingBlocked("ATR14 与前低均缺失，无法推导止损价")
+
+    method, price, formula = max(candidates, key=lambda x: x[1])
+    result = {"price": round(price, 2), "formula": formula, "method": method}
+
+    if dropped:
+        dropped_text = "；".join(f"{m}被舍弃（{r}）" for m, r in dropped)
+        result["note"] = dropped_text
+
+    return result
 
 
 def gate_check(rsi14, bias_ma5) -> list[str]:

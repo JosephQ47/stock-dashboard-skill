@@ -136,10 +136,34 @@ def test_stop_loss_missing_both_raises():
         P.stop_loss(entry=100.0, atr14=None, prior_low=None)
 
 
-def test_stop_loss_prior_low_above_entry_raises():
-    """When prior_low > entry, structure stop would be above entry, which is invalid."""
+def test_stop_loss_valid_atr_with_invalid_structure():
+    """When structure candidate is invalid but ATR is valid, return ATR with note."""
+    r = P.stop_loss(entry=100.0, atr14=3.0, prior_low=105.0)
+    assert r["price"] == pytest.approx(94.0)
+    assert r["method"] == "ATR"
+    assert r["note"] is not None
+    assert "结构" in r["note"] and "舍弃" in r["note"]
+
+
+def test_stop_loss_negative_atr_stop_raises():
+    """When ATR alone produces negative stop, raise PricingBlocked."""
     with pytest.raises(P.PricingBlocked):
-        P.stop_loss(entry=100.0, atr14=10.0, prior_low=105.0)
+        P.stop_loss(entry=100.0, atr14=60.0, prior_low=None)
+
+
+def test_stop_loss_valid_structure_with_invalid_atr():
+    """When ATR candidate is invalid but structure is valid, return structure with note."""
+    r = P.stop_loss(entry=100.0, atr14=60.0, prior_low=90.0)
+    assert r["price"] == pytest.approx(89.1)
+    assert r["method"] == "结构"
+    assert r["note"] is not None
+    assert "ATR" in r["note"] and "舍弃" in r["note"]
+
+
+def test_stop_loss_both_candidates_invalid_raises():
+    """When both ATR and structure candidates are invalid, raise PricingBlocked."""
+    with pytest.raises(P.PricingBlocked):
+        P.stop_loss(entry=100.0, atr14=60.0, prior_low=105.0)
 
 
 def test_gate_check_rsi_over_eighty():
