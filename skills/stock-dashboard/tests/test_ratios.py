@@ -20,7 +20,7 @@ def test_D_bad_string_returns_none():
 
 
 def test_cash_to_profit_normal():
-    assert R.cash_to_profit(120, 100) == pytest.approx(Decimal("1.2"))
+    assert R.cash_to_profit(120, 100) == Decimal("1.2")
 
 
 def test_cash_to_profit_zero_profit_returns_none():
@@ -29,7 +29,7 @@ def test_cash_to_profit_zero_profit_returns_none():
 
 def test_accrual_ratio_formula():
     r = R.accrual_ratio(100, 60, 1000)
-    assert r == pytest.approx(Decimal("0.04"))
+    assert r == Decimal("0.04")
 
 
 def test_accrual_ratio_zero_assets_returns_none():
@@ -37,15 +37,15 @@ def test_accrual_ratio_zero_assets_returns_none():
 
 
 def test_receivable_gap():
-    assert R.receivable_gap(30, 10) == pytest.approx(Decimal("20"))
+    assert R.receivable_gap(30, 10) == Decimal("20")
 
 
 def test_goodwill_ratio():
-    assert R.goodwill_ratio(300, 1000) == pytest.approx(Decimal("0.3"))
+    assert R.goodwill_ratio(300, 1000) == Decimal("0.3")
 
 
 def test_recurring_ratio():
-    assert R.recurring_ratio(70, 100) == pytest.approx(Decimal("0.7"))
+    assert R.recurring_ratio(70, 100) == Decimal("0.7")
 
 
 def test_dupont_keys():
@@ -188,8 +188,8 @@ def test_cash_to_profit_boundary_below_0_7_hits():
 
 def test_accrual_boundary_0_10_does_not_hit():
     fin = _clean_fin()
-    fin["net_profit"] = 100
-    fin["cfo"] = 90
+    fin["net_profit"] = 200
+    fin["cfo"] = 100
     fin["total_assets"] = 1000
     flags = {f["code"]: f for f in R.check_red_flags(fin)}
     assert not flags["ACCRUAL"]["hit"]
@@ -368,6 +368,52 @@ def test_audit_opinion_qualified_hits_and_vetos():
     fin["audit_opinion"] = "保留意见"
     flags = {f["code"]: f for f in R.check_red_flags(fin)}
     assert flags["AUDIT_OPINION"]["hit"]
+    assert flags["AUDIT_OPINION"]["veto"]
+
+
+# 五种审计意见类型的完整测试
+def test_audit_opinion_type1_标准无保留意见_is_clean():
+    """Type 1: 标准无保留意见 - should NOT hit (clean opinion)."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "标准无保留意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"], "标准无保留意见 should be clean"
+    assert not flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_type2_带强调事项段的无保留意见_is_clean():
+    """Type 2: 带强调事项段的无保留意见 - should NOT hit (clean opinion with emphasis paragraph)."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "带强调事项段的无保留意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"], "带强调事项段的无保留意见 should be clean"
+    assert not flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_type3_保留意见_is_qualified():
+    """Type 3: 保留意见 - should HIT and VETO (qualified opinion)."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "保留意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["AUDIT_OPINION"]["hit"], "保留意见 should hit and veto"
+    assert flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_type4_否定意见_is_severe():
+    """Type 4: 否定意见 - should HIT and VETO (most severe, no 无保留)."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "否定意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["AUDIT_OPINION"]["hit"], "否定意见 should hit and veto"
+    assert flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_type5_无法表示意见_is_severe():
+    """Type 5: 无法表示意见 - should HIT and VETO (most severe, no 无保留)."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "无法表示意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["AUDIT_OPINION"]["hit"], "无法表示意见 should hit and veto"
     assert flags["AUDIT_OPINION"]["veto"]
 
 

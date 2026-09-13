@@ -194,10 +194,16 @@ def check_red_flags(fin: dict) -> list[dict]:
         out.append(_flag("AUDIT_OPINION", "审计意见", False, MISSING))
     else:
         opinion_str = str(opinion).strip()
-        # 清洁意见应包含"无保留"（在"保留意见"中或单独出现）
-        # 排除有明确"保留意见"且不是"无保留"的情况
-        has_reservation = "保留意见" in opinion_str and "无保留" not in opinion_str
-        hit = has_reservation
+        # 清洁意见的特征：必须包含"无保留"
+        # 五种审计意见类型：
+        # 1. 标准无保留意见 - 包含"无保留" ✓
+        # 2. 带强调事项段的无保留意见 - 包含"无保留" ✓
+        # 3. 保留意见 - 不包含"无保留" ✗
+        # 4. 否定意见 - 不包含"无保留" ✗
+        # 5. 无法表示意见 - 不包含"无保留" ✗
+        # 任何不是无保留的意见都应否决
+        is_clean = "无保留" in opinion_str
+        hit = not is_clean
         out.append(_flag("AUDIT_OPINION", "审计意见", hit, opinion_str, veto=hit))
 
     pledge_val = fin.get("pledge_ratio")
