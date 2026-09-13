@@ -129,9 +129,14 @@ def test_low_recurring_ratio_hits():
 
 
 def test_big_deposit_loan_is_veto():
+    # 货币资金 400 + 有息负债 350 = 750，低于总资产 1000，是一张真实存在的
+    # 资产负债表能有的结构（大存大贷型公司常见特征：账上现金多，同时又背着
+    # 大额有息负债），而不是像旧 fixture 那样 cash+debt=1700 > total_assets
+    # 1000，现实中不可能出现。40%/35% 均超过 30% 的判定阈值，照样触发否决。
     fin = _clean_fin()
-    fin["cash"] = 900
-    fin["interest_bearing_debt"] = 800
+    fin["total_assets"] = 1000
+    fin["cash"] = 400
+    fin["interest_bearing_debt"] = 350
     flags = {f["code"]: f for f in R.check_red_flags(fin)}
     assert flags["BIG_DEPOSIT_LOAN"]["hit"]
     assert flags["BIG_DEPOSIT_LOAN"]["veto"]

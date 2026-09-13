@@ -157,3 +157,73 @@ def test_conflict_distinguishes_44_9_from_45_0():
     assert conflict_44_9 != conflict_45_0
     assert "44.9" in conflict_44_9
     assert "45.0" in conflict_45_0
+
+
+# ---- 证据（evidence）：quality_score/timing_score 必须报出实际有多少权重在场 ----
+
+def test_quality_score_reports_evidence_fraction():
+    dims = {k: 100 for k in S.QUALITY_WEIGHTS}
+    r = S.quality_score(dims)
+    assert r["evidence"] == pytest.approx(1.0)
+    assert r["dims_present"] == len(S.QUALITY_WEIGHTS)
+    assert r["dims_total"] == len(S.QUALITY_WEIGHTS)
+
+
+def test_quality_score_thin_evidence_single_dim():
+    r = S.quality_score({"statement": 100})
+    assert r["score"] == pytest.approx(100.0)
+    assert r["evidence"] == pytest.approx(S.QUALITY_WEIGHTS["statement"] / 100.0)
+    assert r["dims_present"] == 1
+
+
+def test_quality_score_all_missing_has_zero_evidence():
+    r = S.quality_score({})
+    assert r["evidence"] == 0.0
+    assert r["dims_present"] == 0
+    assert r["dims_total"] == len(S.QUALITY_WEIGHTS)
+
+
+def test_timing_score_reports_evidence_fraction():
+    dims = {"trend": 50}
+    r = S.timing_score(dims)
+    assert r["evidence"] == pytest.approx(S.TIMING_WEIGHTS["trend"] / 100.0)
+    assert r["dims_present"] == 1
+
+
+# ---- map_matrix: 证据单薄时不得断言基本面达标/太弱，只能说证据不足 ----
+
+def test_map_matrix_without_evidence_arg_keeps_old_behavior():
+    # 不传 q_dims_present 时（旧调用方式），行为必须与修复前完全一致。
+    r = S.map_matrix(80, 40, False)
+    assert r["verdict"] == S.VERDICT_WATCH
+    assert "基本面达标" in r["conflict"]
+
+
+def test_map_matrix_thin_evidence_watch_reports_insufficient_not_sound():
+    # 复现报告里的注入场景：Q=100 但只有 1 个维度在场，T 未转好。
+    r = S.map_matrix(100.0, 54.89, False, q_dims_present=1)
+    assert r["verdict"] == S.VERDICT_WATCH  # 结论本身不变
+    assert "基本面达标" not in r["conflict"]
+    assert "证据" in r["conflict"] and ("单薄" in r["conflict"] or "不足" in r["conflict"])
+
+
+def test_map_matrix_thin_evidence_enough_dims_keeps_sound_claim():
+    # 维度数达到下限时，恢复原来的「达标」措辞。
+    r = S.map_matrix(80, 40, False, q_dims_present=S.QUALITY_MIN_DIMS_FOR_CLAIM)
+    assert "基本面达标" in r["conflict"]
+
+
+def test_map_matrix_mirror_case_thin_evidence_does_not_assert_weak():
+    # 镜像场景：0 个质量维度在场，T 高，旧代码会断言「基本面太弱不足投资」，
+    # 修复后必须改成「证据不足」，不能替一个从未评估过的基本面下结论。
+    r = S.map_matrix(0.0, 69.5, False, q_dims_present=0)
+    assert r["verdict"] == S.VERDICT_AVOID
+    assert "太弱" not in r["conflict"]
+    assert "证据" in r["conflict"]
+
+
+def test_map_matrix_mirror_case_thin_evidence_speculation_branch():
+    r = S.map_matrix(50.0, 80.0, False, q_dims_present=1)
+    assert r["verdict"] == S.VERDICT_SPEC
+    assert "不达标" not in r["conflict"]
+    assert "证据" in r["conflict"]

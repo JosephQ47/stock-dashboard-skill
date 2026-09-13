@@ -156,3 +156,73 @@ def test_blocked_avoid_and_no_prices_passes():
     ))
     assert r["ok"]
     assert r["issues"] == []
+
+
+# ---- 证据单薄却给出自信结论：复现报告里 Q=100（仅 1 个维度）、结论
+# 「加入候选池，等技术面转好」但 10 条红旗只判了 1 条的注入场景 ----
+
+def test_thin_evidence_watch_verdict_is_issue():
+    r = SC.verify(_base_computed(
+        quality={"score": 100.0, "dims_present": 1, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": "基本面达标（Q 100.0）但技术面未转好"},
+        flags_evidence={"known": 1, "total": 10, "hits": 0},
+    ))
+    assert not r["ok"]
+    assert any("单薄" in i for i in r["issues"])
+
+
+def test_thin_evidence_buy_verdict_is_issue():
+    r = SC.verify(_base_computed(
+        quality={"score": 100.0, "dims_present": 1, "dims_total": 5},
+        timing={"score": 80.0},
+        matrix={"verdict": S.VERDICT_BUY, "conflict": None},
+        flags_evidence={"known": 1, "total": 10, "hits": 0},
+    ))
+    assert not r["ok"]
+    assert any("单薄" in i for i in r["issues"])
+
+
+def test_genuine_600519_style_evidence_passes_self_check():
+    # 真实 600519 一次跑下来是 3 个质量维度、10 条红旗里 3 条有真实判定，
+    # 阈值（2）不应误伤这种正常报告。
+    r = SC.verify(_base_computed(
+        quality={"score": 96.74, "dims_present": 3, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": "基本面达标（Q 96.7）但技术面未转好"},
+        flags_evidence={"known": 3, "total": 10, "hits": 0},
+    ))
+    assert r["ok"]
+    assert r["issues"] == []
+
+
+def test_thin_dims_but_enough_flags_is_not_flagged_alone():
+    # 只有一个信号薄弱（维度数低但红旗判定数够）时不误报——两个信号必须
+    # 同时低于下限才判定为证据单薄，这是比只看一个信号更保守的选择。
+    r = SC.verify(_base_computed(
+        quality={"score": 100.0, "dims_present": 1, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": None},
+        flags_evidence={"known": 5, "total": 10, "hits": 0},
+    ))
+    assert r["ok"]
+    assert r["issues"] == []
+
+
+def test_missing_evidence_fields_does_not_crash_or_flag():
+    # 旧格式 computed（没有 dims_present/flags_evidence）必须保持向后兼容，
+    # 不能因为新增字段缺失就崩溃或误报。
+    r = SC.verify(_base_computed(
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": None},
+    ))
+    assert r["ok"]
+    assert r["issues"] == []
+
+
+def test_avoid_verdict_with_thin_evidence_is_not_flagged():
+    # 证据单薄检查只针对「基本面达标」类结论（BUY/WATCH），回避结论本身
+    # 已经是保守的，不需要额外标记。
+    r = SC.verify(_base_computed(
+        quality={"score": 30.0, "dims_present": 0, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_AVOID, "conflict": None},
+        flags_evidence={"known": 0, "total": 10, "hits": 0},
+    ))
+    assert r["ok"]
+    assert r["issues"] == []

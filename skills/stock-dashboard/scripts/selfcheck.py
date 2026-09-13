@@ -59,6 +59,27 @@ def verify(computed: dict) -> dict:
     if not computed.get("data_sources"):
         issues.append("缺少数据来源记录")
 
+    # 证据单薄却给出「基本面达标」这类自信结论：VERDICT_BUY/VERDICT_WATCH
+    # 都要求 Q 轴过了 HIGH 门槛，但 renormalize 之后一两个维度就能把分数
+    # 顶到 100——必须同时看质量维度数与红旗真实判定数，两者都低于
+    # scoring 里定的下限（2）才判定为「证据单薄」，两个信号同时缺失比只
+    # 看一个更保守，不会误伤真实 600519 这类 3 维度/3 条红旗的正常报告。
+    # 任一字段缺失（旧格式 computed，没有 dims_present/flags_evidence）
+    # 时不做判断，保持向后兼容。
+    verdict = (computed.get("matrix") or {}).get("verdict")
+    if verdict in (scoring.VERDICT_BUY, scoring.VERDICT_WATCH):
+        dims_present = (computed.get("quality") or {}).get("dims_present")
+        known_flags = (computed.get("flags_evidence") or {}).get("known")
+        if (
+            dims_present is not None and known_flags is not None
+            and dims_present < scoring.QUALITY_MIN_DIMS_FOR_CLAIM
+            and known_flags < scoring.KNOWN_FLAGS_MIN_FOR_CLAIM
+        ):
+            issues.append(
+                f"结论「{verdict}」建立在单薄证据上：仅 {dims_present} 个质量维度、"
+                f"{known_flags} 条红旗有真实数据支撑，不足以断言基本面达标"
+            )
+
     return {"ok": not issues, "issues": issues}
 
 

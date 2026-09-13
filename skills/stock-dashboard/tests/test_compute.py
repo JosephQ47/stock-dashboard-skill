@@ -356,6 +356,75 @@ def test_derive_valuation_anchor_missing_current_price():
     assert "现价" in reason
 
 
+# ---- 证据字段：flags_evidence 与 quality.dims_present 必须能只从 computed 里读出 ----
+
+def test_run_reports_flags_evidence_and_quality_dims_present():
+    raw = {
+        "code": "600519", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": _cn_fin_block(),
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+    }
+    result = C.run(raw)
+    # _cn_fin_block 只有 cfo/net_profit/total_assets/ar_growth/revenue_growth
+    # 齐全，能判定的红旗是 CASH_PROFIT/ACCRUAL/RECEIVABLE 三条，其余七条
+    # （GOODWILL/RECURRING/BIG_DEPOSIT_LOAN/AUDIT_OPINION/PLEDGE/
+    # DELISTING_RISK/INVESTIGATION）都没有数据源，标「未获取到」。
+    assert result["flags_evidence"] == {"known": 3, "total": 10, "hits": 0}
+    assert result["quality"]["dims_present"] == 3  # statement/health/profitability
+    assert result["quality"]["dims_total"] == len(S.QUALITY_WEIGHTS)
+
+
+# ---- 端到端否决：BIG_DEPOSIT_LOAN / 连续两年净现比过低都必须能一路打到
+# matrix=回避、quality<=40，而不是只在 test_scoring.py 里用手写的 q/t 数值
+# 单测 veto 分支。这是唯一两条有真实数据源的一票否决路径，此前从未被端到
+# 端跑过。----
+
+def test_run_end_to_end_big_deposit_loan_veto_forces_avoid_and_caps_quality():
+    fin = _cn_fin_block()
+    # 补上短期/长期借款，使货币资金、有息负债占总资产比例均超过 30%
+    # （200/1000=20% 不够，改成货币资金 400、有息负债合计 350，总资产 1000，
+    # 是一张能真实存在的资产负债表：现金多、同时背着大额有息负债）。
+    fin["balance"][0]["货币资金"] = 400
+    fin["balance"][0]["短期借款"] = 200
+    fin["balance"][0]["长期借款"] = 150
+    raw = {
+        "code": "600519", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": fin,
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+    }
+    result = C.run(raw)
+    flags = {f["code"]: f for f in result["flags"]}
+    assert flags["BIG_DEPOSIT_LOAN"]["hit"]
+    assert flags["BIG_DEPOSIT_LOAN"]["veto"]
+    assert result["veto"] is True
+    assert result["quality"]["score"] <= S.VETO_CAP
+    assert result["matrix"]["verdict"] == S.VERDICT_AVOID
+
+
+def test_run_end_to_end_two_year_low_cash_profit_veto_forces_avoid():
+    fin = _cn_fin_block()
+    # 把最近两期的经营现金流压低，使两年净现比都低于 0.5（cfo/net_profit）。
+    fin["cashflow"][0]["经营活动产生的现金流量净额"] = 30  # 30/80 = 0.375
+    fin["cashflow"][1]["经营活动产生的现金流量净额"] = 20  # 20/70 ≈ 0.286
+    raw = {
+        "code": "600519", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": fin,
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+    }
+    result = C.run(raw)
+    flags = {f["code"]: f for f in result["flags"]}
+    assert flags["CASH_PROFIT"]["veto"]
+    assert result["veto"] is True
+    assert result["quality"]["score"] <= S.VETO_CAP
+    assert result["matrix"]["verdict"] == S.VERDICT_AVOID
+
+
 def test_run_falls_back_to_technical_anchor_when_valuation_blocked():
     """估值锚被阻断（亏损）时，买入区间必须退化为纯技术锚，而不是整体不给价位。"""
     raw = {

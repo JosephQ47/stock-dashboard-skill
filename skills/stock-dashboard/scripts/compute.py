@@ -409,6 +409,21 @@ def derive_timing_dims(tech: dict) -> dict:
     return dims
 
 
+def _flags_evidence(flags: list) -> dict:
+    """红旗证据摘要：total 是判定规则总数（十条固定规则），known 是其中真正
+    基于实际数据判定出结果的条数（detail 不含 ratios.MISSING），hits 是这
+    些 known 里命中的条数。
+
+    derive_quality_dims 的 statement 维度与 compute.run() 输出里的顶层
+    `flags_evidence` 字段共用这一份计算，不允许各自重新数一遍——两处一旦
+    各写一份「什么算已判定」的标准，日后改一处很容易漏改另一处，产生
+    「看板说 3/10 条已判定，内部却按另一个口径打分」的静默分歧。
+    """
+    known = sum(1 for f in flags if ratios.MISSING not in f["detail"])
+    hits = sum(1 for f in flags if f["hit"])
+    return {"known": known, "total": len(flags), "hits": hits}
+
+
 def derive_quality_dims(fin: dict, flags: list, market: str | None = None) -> dict:
     """由财报红旗与真实报表数据推出 Q 轴维度分。
 
@@ -429,10 +444,9 @@ def derive_quality_dims(fin: dict, flags: list, market: str | None = None) -> di
     的维度重新加权归一，省略比编造一个 60 分的占位符更诚实。
     """
     dims = {}
-    hits = sum(1 for f in flags if f["hit"])
-    known = sum(1 for f in flags if "未获取到" not in f["detail"])
-    if known:
-        dims["statement"] = _clamp(100.0 - hits * 100.0 / max(known, 1))
+    ev = _flags_evidence(flags)
+    if ev["known"]:
+        dims["statement"] = _clamp(100.0 - ev["hits"] * 100.0 / max(ev["known"], 1))
 
     group = _market_group(market) or "CN"
     fields = FIELD_MAP[group]
@@ -468,11 +482,12 @@ def run(raw: dict) -> dict:
     derived = extract_derived(market, fin_block)
     flags = ratios.check_red_flags(derived)
     veto = ratios.veto_triggered(flags)
+    flags_evidence = _flags_evidence(flags)
 
     q = scoring.quality_score(derive_quality_dims(fin_block, flags, market))
     t = scoring.timing_score(derive_timing_dims(tech))
     q_score = scoring.apply_veto(q["score"], veto)
-    matrix = scoring.map_matrix(q_score, t["score"], veto)
+    matrix = scoring.map_matrix(q_score, t["score"], veto, q_dims_present=q.get("dims_present"))
 
     gates = pricing.gate_check(tech.get("rsi14"), tech.get("bias_ma5"))
 
@@ -544,6 +559,7 @@ def run(raw: dict) -> dict:
         "block_reasons": block_reasons,
         "tech": tech,
         "flags": flags,
+        "flags_evidence": flags_evidence,
         "veto": veto,
         "quality": dict(q, score=q_score),
         "timing": t,

@@ -149,7 +149,7 @@ def check_red_flags(fin: dict) -> list[dict]:
         elif ta == 0:
             out.append(_flag("ACCRUAL", "总应计比率", False, "总资产为零"))
         else:
-            ar = (np_ - cfo_) / ta
+            ar = accrual_ratio(np_val, cfo_val, ta_val)
             out.append(_flag("ACCRUAL", "总应计比率", ar > Decimal("0.10"), f"应计比率 {ar:.3f}"))
 
     ar_growth_val = fin.get("ar_growth")
