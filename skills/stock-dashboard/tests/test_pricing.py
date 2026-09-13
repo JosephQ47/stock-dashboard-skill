@@ -60,21 +60,40 @@ def test_buy_range_empty_intersection_falls_back_to_nearer_side():
 
 
 def test_buy_range_fallback_to_valuation_anchor():
-    """When valuation is lower, note mentions 'deeper pullback'."""
+    """When valuation is lower, note says fundamentals look expensive relative to the technical band."""
     val = {"low": 50.0, "high": 60.0}
     tech = {"low": 80.0, "high": 90.0}
     r = P.buy_range(val, tech)
-    assert "更深的技术回调" in r["note"] or "等待更深的技术回调" in r["note"]
+    assert "偏贵" in r["note"]
+    assert "需人工复核" in r["note"]
     assert r["low"] == 50.0 and r["high"] == 60.0
 
 
 def test_buy_range_fallback_to_technical_anchor():
-    """When technical is lower, note mentions 'unconfirmed downtrend'."""
+    """When technical is lower, note says fundamentals look cheap but must not claim broken
+    support or an uncertain trend — the anchors' relative position alone cannot establish that."""
     val = {"low": 80.0, "high": 90.0}
     tech = {"low": 50.0, "high": 60.0}
     r = P.buy_range(val, tech)
-    assert "趋势不确定" in r["note"] or "不确定时介入" in r["note"]
+    assert "偏便宜" in r["note"]
+    assert "需人工复核" in r["note"]
+    assert "不代表技术支撑被跌破" in r["note"]
+    assert "不代表趋势不确定" in r["note"]
     assert r["low"] == 50.0 and r["high"] == 60.0
+
+
+def test_buy_range_fallback_technical_anchor_600519_shape():
+    """Regression for the 600519 case: valuation anchor entirely above both price and the
+    technical anchor (cheap-by-PE stock whose technical band sits below the fair-value band).
+    The note must describe only the anchors' relative position, not price action."""
+    val = {"low": 1381.84, "high": 2459.69}
+    tech = {"low": 1168.63, "high": 1298.32}
+    r = P.buy_range(val, tech)
+    assert r["low"] == 1168.63 and r["high"] == 1298.32
+    assert "偏便宜" in r["note"]
+    assert "需人工复核" in r["note"]
+    assert "不代表技术支撑被跌破" in r["note"]
+    assert "不代表趋势不确定" in r["note"]
 
 
 def test_buy_range_technical_only_uses_tech_bounds():

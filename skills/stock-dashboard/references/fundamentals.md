@@ -99,6 +99,15 @@ pe_percentile_75_price)` 取 min/max 构造区间；该函数本身仍然不关�
 式与看板中如实报告用了多少个交易日，绝不把「不足五年的分位数」包装成「五年
 分位」呈现给用户。
 
+**两处 `days_used` 口径不同，不要混用**：`sources_cn.fetch_pe_history` 返回
+的 `days_used` 是「取数时截取的最近约 1220 个交易日总行数」，在过滤 PE 是否
+为正之前统计；`compute.derive_valuation_anchor` 内部重新计算的 `days_used`
+（写入 `val["meta"]["days_used"]`，最终体现在 `formula` 与 `prices.valuation`
+里）是过滤掉非正值 PE（亏损期）之后的有效样本天数，两者只有在这段历史里从
+未出现过 PE 为负/零时才会相等。看板与报告呈现的应该是后者（`meta` 里的
+`days_used`），因为它才是真正参与分位数计算的样本量；两个数字都不是同一件
+事，不能互相替代或混着引用。
+
 **亏损（PE 为负或为零）时不构造估值锚**：当前 PE(TTM) ≤ 0 说明公司当期亏损
 或数据异常，分位数排序对亏损公司没有意义（同样是负数，亏得多的和亏得少的谁
 更「便宜」并无经济含义）。此时 `derive_valuation_anchor` 返回估值锚为空并

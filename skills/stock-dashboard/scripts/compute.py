@@ -493,6 +493,14 @@ def run(raw: dict) -> dict:
             boll = tech.get("boll") or {}
             tech_anchor = pricing.technical_anchor(tech.get("ma20"), prior_low, boll.get("lower"))
 
+            # 传给 derive_valuation_anchor 的 current_price 用的是 kline 的最新收盘价
+            # （tech["last_close"]，来自行情/K 线源），不是 pe_history 区块里
+            # stock_value_em 自带的「当日收盘价」快照（pe_block["current_price"]）。
+            # 两者理论上可能来自不同交易日（取数时间不同步、两个源各自的最新交易日不
+            # 一致时）。选用 kline 的收盘价是因为它与 tech_anchor、prior_low、
+            # resistance 等其它价位共用同一份行情数据，口径一致；分位 PE 换算只依赖
+            # 「现价 / 当前 PE」这个比值在同一天内成立，跨一两个交易日的价格漂移对
+            # 25/75 分位价的影响通常很小，可接受。
             val, val_reason = derive_valuation_anchor(raw.get("pe_history"), last, market)
 
             if val is not None:
