@@ -22,19 +22,18 @@
 
 ## SEC 数据作为权威事实源的定位
 
-`endpoints.SEC_SUBMISSIONS`（`data.sec.gov/submissions/CIK{cik}.json`）与
-`endpoints.SEC_CONCEPT`（`data.sec.gov/api/xbrl/companyconcept/...`）直接
+`endpoints.SEC_SUBMISSIONS`（`data.sec.gov/submissions/CIK{cik}.json`）直接
 读取 SEC 官方披露数据，是美股财报数据中可信度最高的来源，属于「硬数据」。
 `scripts/http_client.py` 中固定使用带真实姓名与邮箱的 User-Agent
 （`"Robin Quan robin.quan@potentia.ai"`），否则请求会被 SEC 拒绝——这是
 SEC 接口的强制要求，不是可选项。
 
 **当前实现现状**：`scripts/sources_hk_us.py` 的 `fetch_financials` 目前只
-实现了通过 yfinance 获取财务三表，尚未接入 SEC companyconcept/submissions
-的实际抓取代码；SEC 作为权威源目前更多是方法论与降级设计上的定位，实际
-取数管线中还没有把 SEC 数据接入主流程。分析阶段如果需要核实 yfinance 数
-据的准确性，应知道可以人工去 SEC EDGAR 核对，但不能假设看板自动做了这一
-步交叉验证。
+实现了通过 yfinance 获取财务三表，尚未接入 SEC submissions 的实际抓取代码
+（`endpoints.SEC_SUBMISSIONS` 目前只在 `scripts/doctor.py` 里用于连通性探
+测）；SEC 作为权威源目前更多是方法论与降级设计上的定位，实际取数管线中
+还没有把 SEC 数据接入主流程。分析阶段如果需要核实 yfinance 数据的准确性，
+应知道可以人工去 SEC EDGAR 核对，但不能假设看板自动做了这一步交叉验证。
 
 ## 港股数据相对薄弱的说明与应对
 

@@ -61,9 +61,22 @@ def verify(computed: dict) -> dict:
 
     # 证据单薄却给出「基本面达标」这类自信结论：VERDICT_BUY/VERDICT_WATCH
     # 都要求 Q 轴过了 HIGH 门槛，但 renormalize 之后一两个维度就能把分数
-    # 顶到 100——必须同时看质量维度数与红旗真实判定数，两者都低于
-    # scoring 里定的下限（2）才判定为「证据单薄」，两个信号同时缺失比只
-    # 看一个更保守，不会误伤真实 600519 这类 3 维度/3 条红旗的正常报告。
+    # 顶到 100。
+    #
+    # 判定条件用「或」而不是「且」：只要质量维度数、或红旗真实判定数，
+    # 任一低于下限（2）就判定为「证据单薄」。这是本次刻意调整过的口径——
+    # 旧版本要求两者同时低于下限才报，比 scoring.map_matrix 自己在
+    # `q_dims_present < QUALITY_MIN_DIMS_FOR_CLAIM` 时就已经软化措辞的判据
+    # 还要窄：会出现「Q 轴只由 1 个维度撑起来、conflict 文案已经在说证据
+    # 单薄，但 selfcheck 仍判 ok: True」这种自检结论比它要backup的措辞规则
+    # 更宽松的情况，等于自检对自己已经识别出的风险视而不见。
+    # 两个方向都要考虑：放宽判定条件确实会多出一些误报（本来正常的报告因为
+    # 单一信号偏薄被多标一句注意），但漏掉一次真正的单薄证据——尤其是「统计
+    # 上只有 statement 一个维度在场，其它维度全靠没人核实的红旗撑住」这类
+    # 情形——恰恰是这道自检存在的意义：宁可让读者多看一句「证据单薄」的提示
+    # 去自行判断，也不能让自检对已知的薄弱信号保持沉默。真实 600519 一次
+    # 正常跑下来是 3 个质量维度、3 条红旗有真实判定，两个数都比下限 2 多
+    # 出 1 的余量，无论用「且」还是「或」都不会被误伤。
     # 任一字段缺失（旧格式 computed，没有 dims_present/flags_evidence）
     # 时不做判断，保持向后兼容。
     verdict = (computed.get("matrix") or {}).get("verdict")
@@ -72,8 +85,10 @@ def verify(computed: dict) -> dict:
         known_flags = (computed.get("flags_evidence") or {}).get("known")
         if (
             dims_present is not None and known_flags is not None
-            and dims_present < scoring.QUALITY_MIN_DIMS_FOR_CLAIM
-            and known_flags < scoring.KNOWN_FLAGS_MIN_FOR_CLAIM
+            and (
+                dims_present < scoring.QUALITY_MIN_DIMS_FOR_CLAIM
+                or known_flags < scoring.KNOWN_FLAGS_MIN_FOR_CLAIM
+            )
         ):
             issues.append(
                 f"结论「{verdict}」建立在单薄证据上：仅 {dims_present} 个质量维度、"

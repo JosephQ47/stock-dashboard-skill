@@ -75,7 +75,7 @@ def test_bollinger_flat_series_has_zero_width():
 
 def test_bollinger_pct_b_at_upper_is_one():
     # Price at upper band should give pct_b close to 1.0
-    closes = [10.0] * 19 + [10.0 + 2.0 * 0.894427]  # upper = mid + k*sd, with sd≈0.894 for this series
+    closes = [10.0] * 19 + [10.0 + 2.0 * 0.894427]  # upper = mid + k*sd, with sd≈0.3899 for this series
     r = ind.bollinger(closes, 20, k=2.0)
     assert r["pct_b"] > 0.95
 

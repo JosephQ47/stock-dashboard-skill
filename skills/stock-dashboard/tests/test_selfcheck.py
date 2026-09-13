@@ -194,13 +194,41 @@ def test_genuine_600519_style_evidence_passes_self_check():
     assert r["issues"] == []
 
 
-def test_thin_dims_but_enough_flags_is_not_flagged_alone():
-    # 只有一个信号薄弱（维度数低但红旗判定数够）时不误报——两个信号必须
-    # 同时低于下限才判定为证据单薄，这是比只看一个信号更保守的选择。
+def test_thin_dims_alone_is_flagged_even_with_enough_flags():
+    # 判定条件是「或」：即使红旗判定数够（known=5 >= 2），只要质量维度数
+    # 低于下限（dims_present=1 < 2），也要判定为证据单薄——这正是
+    # scoring.map_matrix 在 q_dims_present < QUALITY_MIN_DIMS_FOR_CLAIM 时
+    # 已经独立软化措辞的同一个信号，selfcheck 的判据不能比它还窄。
     r = SC.verify(_base_computed(
         quality={"score": 100.0, "dims_present": 1, "dims_total": 5},
         matrix={"verdict": S.VERDICT_WATCH, "conflict": None},
         flags_evidence={"known": 5, "total": 10, "hits": 0},
+    ))
+    assert not r["ok"]
+    assert any("单薄" in i for i in r["issues"])
+
+
+def test_thin_flags_alone_is_flagged_even_with_enough_dims():
+    # 反过来同样成立：维度数够（dims_present=3 >= 2）但红旗真实判定数不足
+    # （known=1 < 2）时，也要判定为证据单薄——质量维度和红旗判定是两个独立
+    # 的证据来源，任一薄弱都不足以支撑「基本面达标」的自信结论。
+    r = SC.verify(_base_computed(
+        quality={"score": 90.0, "dims_present": 3, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": None},
+        flags_evidence={"known": 1, "total": 10, "hits": 0},
+    ))
+    assert not r["ok"]
+    assert any("单薄" in i for i in r["issues"])
+
+
+def test_thin_evidence_boundary_at_exactly_min_thresholds_passes():
+    # 边界钉住：dims_present 与 known 都恰好等于下限 2（不低于），不应判定
+    # 为证据单薄——真实 600519 一次正常跑下来的余量（3/3）比这条边界更宽，
+    # 这里钉住的是阈值本身「小于才算薄」而不是「小于等于」。
+    r = SC.verify(_base_computed(
+        quality={"score": 90.0, "dims_present": 2, "dims_total": 5},
+        matrix={"verdict": S.VERDICT_WATCH, "conflict": None},
+        flags_evidence={"known": 2, "total": 10, "hits": 0},
     ))
     assert r["ok"]
     assert r["issues"] == []

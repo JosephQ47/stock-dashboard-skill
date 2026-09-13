@@ -83,17 +83,20 @@
 
 ## 巨潮必须 POST
 
-`CNINFO_SEARCH`（`topSearch/query`）与 `CNINFO_ANNOUNCE`（`hisAnnouncement/query`）
-都必须用 POST，且请求头需包含 `Content-Type: application/x-www-form-urlencoded`
-（对应 `endpoints.FORM_HEADERS`）。用 GET 请求会返回 HTTP 500，不是查询参数
-问题，是接口本身只接受 POST。
+`CNINFO_SEARCH`（`topSearch/query`）必须用 POST，且请求头需包含
+`Content-Type: application/x-www-form-urlencoded`（对应
+`endpoints.FORM_HEADERS`）。用 GET 请求会返回 HTTP 500，不是查询参数问题，
+是接口本身只接受 POST。当前流水线里只有 `scripts/doctor.py` 用它探测连通
+性，取数主流程（`sources_cn.py`）未接入巨潮公告数据。
 
 ## SEC 必须带姓名邮箱 UA
 
-SEC 的接口（`SEC_SUBMISSIONS`、`SEC_CONCEPT`）要求 `User-Agent` 中包含真实
-姓名与邮箱，否则拒绝访问。当前实现中固定使用
+SEC 的接口（`SEC_SUBMISSIONS`）要求 `User-Agent` 中包含真实姓名与邮箱，否
+则拒绝访问。当前实现中固定使用
 `endpoints.SEC_UA = {"User-Agent": "Robin Quan robin.quan@potentia.ai"}`，
 已通过实测验证可用。不要替换成通用字符串（如 `python-requests/x.x`），会被拒。
+同样地，`SEC_SUBMISSIONS` 目前只在 `scripts/doctor.py` 里用于连通性探测，
+取数主流程（`sources_hk_us.py`）尚未接入 SEC 数据。
 
 ## 北向资金字段禁令
 

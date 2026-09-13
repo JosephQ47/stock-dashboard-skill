@@ -76,6 +76,24 @@ ANNUAL_FILTER = {
 }
 
 
+# 参与聚合的取数区块——每个区块自带 source/fetched_at，是这两项信息的唯一
+# 来源。`_data_sources` 把它们收拢成一张 {区块名: {source, fetched_at}} 的
+# 表，而不是分别维护一张「区块 -> 源名」和另一张「区块 -> 时间」的表：两张
+# 表各自更新、一处忘了改就会互相错位（drift），一张表从根源上排除了这种
+# 可能。看板模板第 11 节（数据来源清单）与表头的取数时间列都从这里取值，
+# 必须能只从 computed JSON 里拿到，不再需要回看 raw.json。
+_DATA_SOURCE_BLOCKS = ("quote", "kline", "financials", "pe_history")
+
+
+def _data_sources(raw: dict) -> dict:
+    out = {}
+    for key in _DATA_SOURCE_BLOCKS:
+        block = raw.get(key)
+        if block:
+            out[key] = {"source": block.get("source"), "fetched_at": block.get("fetched_at")}
+    return out
+
+
 def _clamp(x, lo=0.0, hi=100.0):
     return max(lo, min(hi, float(x)))
 
@@ -567,7 +585,7 @@ def run(raw: dict) -> dict:
         "gates": gates,
         "prices": prices,
         "price_error": price_error,
-        "data_sources": raw.get("data_sources"),
+        "data_sources": _data_sources(raw),
         # extras 原样透传：A 股是龙虎榜/两融/解禁，港股/美股是「此项不适用于该
         # 市场」的结构化说明（available=False 且 reason 明确写着「不适用」，
         # 不是抓取失败）。看板模板第 7 节直接渲染这个块，必须能只从 computed
