@@ -6,28 +6,42 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+import math
 
 MISSING = "未获取到"
 
 
 def D(x):
+    """转 Decimal。财报里的「无此项」在源头（pandas/numpy）经常是浮点 NaN，
+    Decimal(str(float('nan'))) 不会报错，会悄悄生成一个 Decimal('NaN')，
+    这种值一旦参与 <、> 等比较会抛 decimal.InvalidOperation，一旦参与四则
+    运算会污染成 NaN 而不是被当作缺失处理。必须在转换这一步就拦下，返回 None，
+    让上层的缺失判定接管，而不是让 NaN 悄悄流入红旗判断。
+    """
     if x is None:
         return None
+    if isinstance(x, float) and math.isnan(x):
+        return None
     if isinstance(x, Decimal):
-        return x
+        return None if x.is_nan() else x
     try:
-        return Decimal(str(x))
+        d = Decimal(str(x))
     except (InvalidOperation, ValueError, TypeError):
         return None
+    return None if d.is_nan() else d
 
 
 def _is_missing(value):
     """检查值是否为缺失数据。
 
-    缺失的值包括：None、空字符串、仅空格字符串、常见占位符。
+    缺失的值包括：None、空字符串、仅空格字符串、常见占位符、浮点/Decimal 的 NaN。
     占位符包括: --, N/A, nan, None（不区分大小写）。
     """
     if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    if isinstance(value, Decimal) and value.is_nan():
         return True
     if isinstance(value, str):
         cleaned = value.strip().lower()

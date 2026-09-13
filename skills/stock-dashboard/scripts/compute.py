@@ -17,24 +17,77 @@ import pricing
 import ratios
 import scoring
 
+# 市场分组：A 股（沪/深/北）共用新浪源的中文报表列名；港股/美股共用 yfinance 的
+# 英文报表科目名。两组字段名完全不同，但下游需要的十个 ratios 字段是一样的，
+# 用一张按分组索引的字段名映射表来抽取，避免同一份「字段缺失就换个名字再试」
+# 的回退链在多个函数里各写一份、日后改一个忘了改另一个。
+_CN_MARKETS = ("CN_SH", "CN_SZ", "CN_BJ")
+
+
+def _market_group(market):
+    if market in _CN_MARKETS:
+        return "CN"
+    if market in ("HK", "US"):
+        return "US"  # 港股/美股都走 yfinance，报表科目名一致
+    return None
+
+
+FIELD_MAP = {
+    "CN": {
+        "cfo": ("经营活动产生的现金流量净额",),
+        "net_profit": ("净利润",),
+        "total_assets": ("资产总计",),
+        "goodwill": ("商誉",),
+        "net_assets": ("所有者权益(或股东权益)合计", "归属于母公司股东权益合计"),
+        "cash": ("货币资金",),
+        "short_debt": ("短期借款",),
+        "long_debt": ("长期借款",),
+        "ar": ("应收账款", "应收票据及应收账款"),
+        "revenue": ("营业收入", "营业总收入"),
+    },
+    "US": {
+        "cfo": ("Operating Cash Flow",),
+        "net_profit": ("Net Income",),
+        "total_assets": ("Total Assets",),
+        "goodwill": ("Goodwill",),
+        "net_assets": ("Stockholders Equity", "Common Stock Equity"),
+        "cash": ("Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"),
+        "short_debt": ("Current Debt",),
+        "long_debt": ("Long Term Debt",),
+        "ar": ("Accounts Receivable", "Receivables"),
+        "revenue": ("Total Revenue", "Operating Revenue"),
+    },
+}
+
+# A 股财报季度、年度混杂在同一张表里，年报以「报告日」以 1231 结尾识别；
+# 港股/美股走 yfinance 默认只返回年度数据（财年结束日不一定是 12-31，例如
+# 苹果是 09-30），因此不按后缀筛选，全部当年度处理。
+ANNUAL_FILTER = {
+    "CN": lambda d: d.endswith("1231"),
+    "US": None,
+}
+
 
 def _clamp(x, lo=0.0, hi=100.0):
     return max(lo, min(hi, float(x)))
 
 
 def _D(v):
-    """安全转 Decimal。None、空串、常见占位符（含浮点 NaN）一律转为 None。
+    """安全转 Decimal。None、空串、常见占位符（含浮点/Decimal 的 NaN）一律转为 None。
 
     pandas 的 NaN 经 json 往返后是 Python float('nan')；str(float('nan')) == 'nan'，
-    而 Decimal('nan') 并不报错，会悄悄生成一个 NaN Decimal 而不是抛异常。
-    ratios.py 自己的 D() 有同样的隐患（对 NaN 不当作缺失处理），所以这里必须先把
-    NaN 拦在 compute.py 这一层，绝不把 NaN 值放进 check_red_flags 的输入字典里，
-    否则 fin.get(key) 非 None、_is_missing() 也认不出 NaN，红旗判定会被污染。
+    而 Decimal('nan') 并不报错，会悄悄生成一个 NaN Decimal 而不是抛异常，一旦参与
+    比较还会抛 InvalidOperation。ratios.py 的 D()/_is_missing() 已经在源头做了同样
+    的拦截（NaN 不分市场，A 股新浪源和 yfinance 都用 NaN 表示「无此科目」），这里
+    重复一遍是纵深防御：compute.py 自己也做 Decimal 运算（如权益比率、净利率、
+    同比增速），不能假设所有输入都会先过一遍 ratios.check_red_flags。
     """
     if v is None:
         return None
     if isinstance(v, float) and math.isnan(v):
         return None
+    if isinstance(v, Decimal):
+        return None if v.is_nan() else v
     s = str(v).strip()
     if not s or s.lower() in ("--", "nan", "none", "n/a"):
         return None
@@ -42,9 +95,23 @@ def _D(v):
         d = Decimal(s)
     except (InvalidOperation, ValueError, AttributeError):
         return None
-    if d.is_nan():
+    return None if d.is_nan() else d
+
+
+def _first_value(row, field_names):
+    """按顺序尝试一组候选字段名，返回第一个非缺失的 Decimal 值。
+
+    唯一的字段名回退实现——net_assets、cash、revenue 等「同一概念、不同报表
+    版本里叫法不同」的字段，无论在 extract_derived 还是 derive_quality_dims
+    里用，都调这一个函数，不允许两处各写一条回退链、日后改动只改了一处。
+    """
+    if not row:
         return None
-    return d
+    for name in field_names:
+        v = _D(row.get(name))
+        if v is not None:
+            return v
+    return None
 
 
 def _find_by_date(rows, date_str):
@@ -62,60 +129,84 @@ def _prior_year_date(date_str):
     return f"{int(date_str[:4]) - 1}{date_str[4:]}"
 
 
-def _yoy_growth_pct(rows, field, current_date):
+def _yoy_growth_pct(rows, current_date, field_names):
     """同比增速（百分比数字，如 12.3 代表 12.3%）。
 
     必须用去年同一期（同月同日）对比，而不是相邻两期（例如二季度对一季度），
     否则会把环比误当同比，产生没有意义的增速。找不到同期数据就返回 None。
+    `field_names` 是一组候选科目名，按顺序尝试，两期都要能用同一个候选名取到
+    值才算数（不允许今年用「应收账款」、去年用「应收票据及应收账款」拼出增速，
+    那样的同比没有实际意义）。
     """
     prior_date = _prior_year_date(current_date)
     cur_row = _find_by_date(rows, current_date)
     prior_row = _find_by_date(rows, prior_date)
     if cur_row is None or prior_row is None:
         return None
-    cur = _D(cur_row.get(field))
-    prior = _D(prior_row.get(field))
-    if cur is None or prior is None or prior == 0:
-        return None
-    return (cur - prior) / prior * Decimal(100)
+    for field in field_names:
+        cur = _D(cur_row.get(field))
+        prior = _D(prior_row.get(field))
+        if cur is not None and prior is not None and prior != 0:
+            return (cur - prior) / prior * Decimal(100)
+    return None
 
 
-def _cash_to_profit_history(cashflow, income):
-    """最近两个「年报」期（报告日以 1231 结尾）的净现比。
+def _cash_to_profit_history(cashflow, income, cfo_field, net_profit_field, annual_filter=None):
+    """最近两个年度期的净现比历史，供 check_red_flags 判定「连续两年净现比低于
+    0.5」的一票否决用。
 
-    任务 8 保证 balance/income/cashflow 各自的年报口径至少覆盖 3 期（如果公司历史
-    够长），但不足两期年报时（新股、次新股），宁可整体不给这个 key，也不要拿一期
-    凑数——那样会让 check_red_flags 里「连续两年低于 0.5」的判断失真。
+    与主净现比指标（只需最新一期 cfo、net_profit 均非缺失）不同的地方：这里如果
+    两期年报中有一期缺 cfo 或 net_profit 为零，只丢弃那一期，仍然把另一期的有效
+    值返回——因为 check_red_flags 只有在 len(history) >= 2 时才会判定「连续两年」
+    偏低，只给 1 个数不会误触发否决；比因为一期数据有问题就把另一期也一起扔掉更
+    诚实：应该如实反映「只查到一期」，而不是「什么都没有」。
     """
-    annuals_cf = {str(r.get("报告日")): r for r in cashflow if str(r.get("报告日", "")).endswith("1231")}
-    annuals_inc = {str(r.get("报告日")): r for r in income if str(r.get("报告日", "")).endswith("1231")}
-    common = sorted(set(annuals_cf) & set(annuals_inc), reverse=True)[:2]
-    if len(common) < 2:
+    if annual_filter:
+        cf_rows = [r for r in cashflow if annual_filter(str(r.get("报告日", "")))]
+        inc_rows = [r for r in income if annual_filter(str(r.get("报告日", "")))]
+    else:
+        cf_rows = cashflow
+        inc_rows = income
+    cf_by_date = {str(r.get("报告日")): r for r in cf_rows}
+    inc_by_date = {str(r.get("报告日")): r for r in inc_rows}
+    common = sorted(set(cf_by_date) & set(inc_by_date), reverse=True)[:2]
+    if not common:
         return None
     history = []
     for d in common:
-        cfo = _D(annuals_cf[d].get("经营活动产生的现金流量净额"))
-        np_ = _D(annuals_inc[d].get("净利润"))
-        if cfo is None or np_ is None or np_ == 0:
-            return None
-        history.append(cfo / np_)
-    return history if len(history) >= 2 else None
+        cfo = _D(cf_by_date[d].get(cfo_field))
+        np_ = _D(inc_by_date[d].get(net_profit_field))
+        if cfo is not None and np_ is not None and np_ != 0:
+            history.append(cfo / np_)
+    return history or None
 
 
-def extract_derived_cn(fin_block: dict) -> dict:
-    """把 A 股 sources_cn.fetch_financials 的原始三张报表映射成 ratios.check_red_flags
-    需要的扁平字段。sources_cn 只提供 balance/income/cashflow 三个列表（新→旧排列，
-    `报告日` 为 YYYYMMDD 字符串），并不提供 `derived`，这一层的映射就是补上这个缺口。
+def extract_derived(market, fin_block: dict) -> dict:
+    """把 fetch_financials 的原始三张报表（balance/income/cashflow，均为新→旧
+    排列、`报告日` 为 YYYYMMDD 字符串的 list[dict]）映射成 ratios.check_red_flags
+    需要的扁平字段。A 股（新浪源，中文列名）与港股/美股（yfinance，英文科目名）
+    共用同一套抽取逻辑，只是 `FIELD_MAP`/`ANNUAL_FILTER` 按市场分组取不同的字段
+    名与年报口径。
 
     能映射的字段：cfo、net_profit、total_assets、goodwill、net_assets、cash、
-    interest_bearing_debt（短期借款+长期借款的代理指标）、ar_growth、revenue_growth、
-    cash_to_profit_history。
+    interest_bearing_debt（短期借款+长期借款的代理指标，两项都非缺失才求和，
+    只拿到一侧就整体省略——按 0 处理会系统性低估负债，比缺失更危险）、ar_growth、
+    revenue_growth、cash_to_profit_history。
 
-    没有来源、宁可缺失也不编造的字段：deducted_profit（新浪报表未确认有扣非净利润
-    列）、audit_opinion、pledge_ratio、delisting_risk、under_investigation（当前流水
-    线完全没有对接审计意见、质押、退市风险、立案调查的数据源）。这些字段不写进返回
-    字典，check_red_flags 会自然读到 None、判定为「未获取到」。
+    没有来源、宁可缺失也不编造的字段：deducted_profit（无论 A 股新浪源还是
+    yfinance 都没有确认存在扣非净利润科目）、audit_opinion、pledge_ratio、
+    delisting_risk、under_investigation（当前流水线完全没有对接这四类数据源，
+    与市场无关）。这些字段不写进返回字典，check_red_flags 会自然读到 None、
+    判定为「未获取到」。
     """
+    if not fin_block or not fin_block.get("available"):
+        return {}
+    group = _market_group(market)
+    if group is None:
+        return {}
+    fields = FIELD_MAP[group]
+    annual_filter = ANNUAL_FILTER[group]
+
     derived: dict = {}
     balance = fin_block.get("balance") or []
     income = fin_block.get("income") or []
@@ -126,75 +217,55 @@ def extract_derived_cn(fin_block: dict) -> dict:
     cf0 = cashflow[0] if cashflow else None
 
     if cf0 is not None:
-        cfo = _D(cf0.get("经营活动产生的现金流量净额"))
+        cfo = _first_value(cf0, fields["cfo"])
         if cfo is not None:
             derived["cfo"] = cfo
 
     if inc0 is not None:
-        net_profit = _D(inc0.get("净利润"))
+        net_profit = _first_value(inc0, fields["net_profit"])
         if net_profit is not None:
             derived["net_profit"] = net_profit
 
     if bal0 is not None:
-        total_assets = _D(bal0.get("资产总计"))
+        total_assets = _first_value(bal0, fields["total_assets"])
         if total_assets is not None:
             derived["total_assets"] = total_assets
 
-        goodwill = _D(bal0.get("商誉"))
+        goodwill = _first_value(bal0, fields["goodwill"])
         if goodwill is not None:
             derived["goodwill"] = goodwill
 
-        net_assets = _D(bal0.get("所有者权益(或股东权益)合计"))
-        if net_assets is None:
-            net_assets = _D(bal0.get("归属于母公司股东权益合计"))
+        net_assets = _first_value(bal0, fields["net_assets"])
         if net_assets is not None:
             derived["net_assets"] = net_assets
 
-        cash = _D(bal0.get("货币资金"))
+        cash = _first_value(bal0, fields["cash"])
         if cash is not None:
             derived["cash"] = cash
 
-        # 有息负债不是单一列，短期借款+长期借款是合理代理指标（不含应付债券等其他
-        # 有息负债形式）。两者必须都拿到才求和：只拿到一侧会系统性低估有息负债，
-        # 比悄悄按 0 处理更危险，所以宁可整体缺失。
-        short_debt = _D(bal0.get("短期借款"))
-        long_debt = _D(bal0.get("长期借款"))
+        short_debt = _first_value(bal0, fields["short_debt"])
+        long_debt = _first_value(bal0, fields["long_debt"])
         if short_debt is not None and long_debt is not None:
             derived["interest_bearing_debt"] = short_debt + long_debt
 
         cur_date = str(bal0.get("报告日") or "")
-        ar_growth = _yoy_growth_pct(balance, "应收账款", cur_date)
-        if ar_growth is None:
-            ar_growth = _yoy_growth_pct(balance, "应收票据及应收账款", cur_date)
+        ar_growth = _yoy_growth_pct(balance, cur_date, fields["ar"])
         if ar_growth is not None:
             derived["ar_growth"] = ar_growth
 
     if inc0 is not None:
         cur_date_inc = str(inc0.get("报告日") or "")
-        revenue_growth = _yoy_growth_pct(income, "营业收入", cur_date_inc)
-        if revenue_growth is None:
-            revenue_growth = _yoy_growth_pct(income, "营业总收入", cur_date_inc)
+        revenue_growth = _yoy_growth_pct(income, cur_date_inc, fields["revenue"])
         if revenue_growth is not None:
             derived["revenue_growth"] = revenue_growth
 
-    history = _cash_to_profit_history(cashflow, income)
+    history = _cash_to_profit_history(
+        cashflow, income, fields["cfo"][0], fields["net_profit"][0], annual_filter
+    )
     if history is not None:
         derived["cash_to_profit_history"] = history
 
     return derived
-
-
-def extract_derived(market: str | None, fin_block: dict) -> dict:
-    """按市场分派映射。A 股走 extract_derived_cn；港股/美股当前源头
-    （sources_hk_us.fetch_financials）只记录报表行数与 yfinance info 的键名列表，
-    并不保留资产负债表/利润表/现金流量表的具体数值，因此暂时没有可映射的字段，
-    诚实返回空字典，让全部十项红旗如实显示「未获取到」，而不是编造数字。
-    """
-    if not fin_block or not fin_block.get("available"):
-        return {}
-    if market in ("CN_SH", "CN_SZ", "CN_BJ"):
-        return extract_derived_cn(fin_block)
-    return {}
 
 
 def derive_timing_dims(tech: dict) -> dict:
@@ -228,19 +299,24 @@ def derive_timing_dims(tech: dict) -> dict:
     return dims
 
 
-def derive_quality_dims(fin: dict, flags: list) -> dict:
+def derive_quality_dims(fin: dict, flags: list, market: str | None = None) -> dict:
     """由财报红旗与真实报表数据推出 Q 轴维度分。
 
     statement：红旗命中率的反向映射，沿用既有逻辑。
-    health：用权益比率（所有者权益合计 / 资产总计）代理财务健康度——权益占比越高，
+    health：用权益比率（所有者权益 / 总资产）代理财务健康度——权益占比越高，
         杠杆越低，抗风险能力越强，直接按百分比映射到 0~100 分。
-    profitability：用净利率（净利润 / 营业收入）代理盈利能力，0% 记 50 分（中性），
-        每 1 个百分点净利率对应 2 分浮动。
+    profitability：用净利率（净利润 / 营业收入）代理盈利能力，0% 记 50 分
+        （中性），每 1 个百分点净利率对应 2 分浮动。
 
-    两个维度只要输入数据（资产总计/所有者权益/净利润/营业收入）任一缺失，就整体
-    不写入该维度——scoring.py 会对在场的维度重新加权归一，省略比编造一个 60 分的
-    占位符更诚实。仅当财务数据完全不可用（fin 为空或 available=False）时才两者
-    都缺失，例如当前港股/美股管线尚未保留报表明细的情况。
+    字段名回退链复用 `FIELD_MAP` + `_first_value`，与 `extract_derived` 共用
+    同一份映射表，不再各写一份「先试这个名字，缺了再试那个名字」的逻辑——
+    两处一旦各写一份，日后改字段名很容易只改一处、悄悄产生分歧。
+
+    `market` 缺省（None）时按 A 股字段名读取，保持向后兼容；`run()` 会显式
+    传入市场以支持港股/美股。
+
+    两个维度只要输入数据任一缺失，就整体不写入该维度——scoring.py 会对在场
+    的维度重新加权归一，省略比编造一个 60 分的占位符更诚实。
     """
     dims = {}
     hits = sum(1 for f in flags if f["hit"])
@@ -248,25 +324,24 @@ def derive_quality_dims(fin: dict, flags: list) -> dict:
     if known:
         dims["statement"] = _clamp(100.0 - hits * 100.0 / max(known, 1))
 
+    group = _market_group(market) or "CN"
+    fields = FIELD_MAP[group]
+
     balance = (fin or {}).get("balance") or []
     income = (fin or {}).get("income") or []
     bal0 = balance[0] if balance else None
     inc0 = income[0] if income else None
 
     if bal0 is not None:
-        total_assets = _D(bal0.get("资产总计"))
-        net_assets = _D(bal0.get("所有者权益(或股东权益)合计"))
-        if net_assets is None:
-            net_assets = _D(bal0.get("归属于母公司股东权益合计"))
+        total_assets = _first_value(bal0, fields["total_assets"])
+        net_assets = _first_value(bal0, fields["net_assets"])
         if total_assets is not None and net_assets is not None and total_assets != 0:
             equity_ratio = net_assets / total_assets
             dims["health"] = _clamp(float(equity_ratio) * 100.0)
 
     if inc0 is not None:
-        net_profit = _D(inc0.get("净利润"))
-        revenue = _D(inc0.get("营业收入"))
-        if revenue is None:
-            revenue = _D(inc0.get("营业总收入"))
+        net_profit = _first_value(inc0, fields["net_profit"])
+        revenue = _first_value(inc0, fields["revenue"])
         if net_profit is not None and revenue is not None and revenue != 0:
             net_margin = net_profit / revenue
             dims["profitability"] = _clamp(50.0 + float(net_margin) * 200.0)
@@ -278,41 +353,69 @@ def run(raw: dict) -> dict:
     kline = raw.get("kline") or {}
     tech = indicators.compute_all(kline) if kline.get("close") else {}
 
+    market = raw.get("market")
     fin_block = raw.get("financials") or {}
-    derived = extract_derived(raw.get("market"), fin_block)
+    derived = extract_derived(market, fin_block)
     flags = ratios.check_red_flags(derived)
     veto = ratios.veto_triggered(flags)
 
-    q = scoring.quality_score(derive_quality_dims(fin_block, flags))
+    q = scoring.quality_score(derive_quality_dims(fin_block, flags, market))
     t = scoring.timing_score(derive_timing_dims(tech))
     q_score = scoring.apply_veto(q["score"], veto)
     matrix = scoring.map_matrix(q_score, t["score"], veto)
 
     gates = pricing.gate_check(tech.get("rsi14"), tech.get("bias_ma5"))
 
+    blocked = bool(raw.get("blocked", False))
+    block_reasons = raw.get("block_reasons") or []
+
     prices, price_error = {}, None
-    try:
-        closes = kline.get("close") or []
-        prior_low = min(closes[-60:]) if len(closes) >= 20 else None
-        resistance = max(closes[-60:]) if len(closes) >= 20 else None
-        last = tech.get("last_close")
-        boll = tech.get("boll") or {}
-        val = pricing.valuation_anchor(last * 0.85, last * 1.20) if last else None
-        tech_anchor = pricing.technical_anchor(tech.get("ma20"), prior_low, boll.get("lower"))
-        if val:
-            prices["buy_range"] = pricing.buy_range(val, tech_anchor)
-            prices["target"] = pricing.target_price(val["high"], resistance, None)
-            entry = prices["buy_range"]["high"]
-            prices["stop_loss"] = pricing.stop_loss(entry, tech.get("atr14"), prior_low)
-    except pricing.PricingBlocked as exc:
-        price_error = str(exc)
+    if blocked:
+        # 数据本身被 fetch_data 的硬性阻断线判了「不完整/不可信」（行情缺失、
+        # 财务缺失或完备率不足），此时 kline 的收盘价可能是陈旧或片面的
+        # last_close（indicators.compute_all 只看 kline，不看 quote 是否成功），
+        # 绝不能拿它去推导一个看起来言之凿凿的买入区间/目标价/止损价。宁可不给
+        # 价位，也不能让读者把「数据不全时算出来的数字」误当成「数据齐全时算出
+        # 来的数字」。
+        price_error = (
+            "数据被阻断（" + "；".join(block_reasons) + "），不推导买入区间/目标价/止损价"
+            if block_reasons
+            else "数据被阻断，不推导买入区间/目标价/止损价"
+        )
+    else:
+        try:
+            closes = kline.get("close") or []
+            prior_low = min(closes[-60:]) if len(closes) >= 20 else None
+            resistance = max(closes[-60:]) if len(closes) >= 20 else None
+            last = tech.get("last_close")
+            boll = tech.get("boll") or {}
+            val = pricing.valuation_anchor(last * 0.85, last * 1.20) if last else None
+            tech_anchor = pricing.technical_anchor(tech.get("ma20"), prior_low, boll.get("lower"))
+            if val:
+                prices["buy_range"] = pricing.buy_range(val, tech_anchor)
+                prices["target"] = pricing.target_price(val["high"], resistance, None)
+                entry = prices["buy_range"]["high"]
+                prices["stop_loss"] = pricing.stop_loss(entry, tech.get("atr14"), prior_low)
+        except pricing.PricingBlocked as exc:
+            price_error = str(exc)
+
+    if blocked:
+        # 同样的道理，矩阵结论也不能装作数据齐全——不管 Q/T 算出来是多少，一律
+        # 强制回避，并把阻断原因带在 conflict 里，让读者看得到「为什么」，而不
+        # 是只看到一个孤零零的「回避」。
+        reason_text = "；".join(block_reasons) if block_reasons else "数据不完整或不可信"
+        matrix = {
+            "verdict": scoring.VERDICT_AVOID,
+            "conflict": f"数据被阻断（{reason_text}），在数据补齐前一律回避，不构成任何买入或候选结论",
+        }
 
     return {
         "code": raw.get("code"),
-        "market": raw.get("market"),
+        "market": market,
         "currency": raw.get("currency"),
         "completeness": raw.get("completeness"),
-        "blocked": raw.get("blocked", False),
+        "blocked": blocked,
+        "block_reasons": block_reasons,
         "tech": tech,
         "flags": flags,
         "veto": veto,

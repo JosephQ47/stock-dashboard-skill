@@ -529,3 +529,71 @@ def test_zero_denominator_recurring_not_missing():
     assert not flags["RECURRING"]["hit"]
     assert "归母净利润为零" in flags["RECURRING"]["detail"]
     assert "未获取到" not in flags["RECURRING"]["detail"]
+
+
+# NaN 测试：pandas/numpy 的「无此科目」经 json 往返后是 Python float('nan')。
+# str(float('nan')) == 'nan'，但 Decimal('nan') 并不报错——它会悄悄生成一个
+# Decimal('NaN')，参与 <、> 比较时抛 decimal.InvalidOperation。财报里的 NaN
+# 不是罕见输入，是这些统计源表示「公司没有这个科目」的常规方式（比如贵州茅台
+# 没有商誉、没有短期借款），必须当作缺失处理，而不是让它崩溃或悄悄参与运算。
+def test_D_float_nan_returns_none():
+    assert R.D(float("nan")) is None
+
+
+def test_D_decimal_nan_returns_none():
+    assert R.D(Decimal("NaN")) is None
+
+
+def test_goodwill_missing_float_nan_does_not_crash():
+    fin = _clean_fin()
+    fin["goodwill"] = float("nan")
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["GOODWILL"]["hit"]
+    assert "未获取到" in flags["GOODWILL"]["detail"]
+
+
+def test_big_deposit_loan_missing_float_nan_does_not_crash():
+    fin = _clean_fin()
+    fin["cash"] = float("nan")
+    fin["interest_bearing_debt"] = float("nan")
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["BIG_DEPOSIT_LOAN"]["hit"]
+    assert "未获取到" in flags["BIG_DEPOSIT_LOAN"]["detail"]
+
+
+def test_cash_profit_missing_float_nan_does_not_crash():
+    fin = _clean_fin()
+    fin["cfo"] = float("nan")
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["CASH_PROFIT"]["hit"]
+    assert "未获取到" in flags["CASH_PROFIT"]["detail"]
+
+
+def test_cash_to_profit_history_with_nan_entry_is_ignored():
+    """History 里混入 NaN 不应该崩溃，也不应该把 NaN 当成一个有效的低值年份。"""
+    fin = _clean_fin()
+    fin["cash_to_profit_history"] = [float("nan"), 0.3]
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    # 只剩一个有效年份，不满足「连续两年」，不应触发否决
+    assert not flags["CASH_PROFIT"]["veto"]
+
+
+def test_all_ten_flags_survive_nan_across_the_board():
+    """一次性把所有数值字段喂 NaN，确认 check_red_flags 整体不崩溃。"""
+    fin = {
+        "cfo": float("nan"), "net_profit": float("nan"), "total_assets": float("nan"),
+        "ar_growth": float("nan"), "revenue_growth": float("nan"),
+        "goodwill": float("nan"), "net_assets": float("nan"),
+        "deducted_profit": float("nan"),
+        "cash": float("nan"), "interest_bearing_debt": float("nan"),
+        "audit_opinion": float("nan"),
+        "pledge_ratio": float("nan"),
+        "delisting_risk": float("nan"),
+        "under_investigation": float("nan"),
+        "cash_to_profit_history": [float("nan"), float("nan")],
+    }
+    flags = R.check_red_flags(fin)
+    assert len(flags) == 10
+    assert all(not f["hit"] for f in flags)
+    assert all("未获取到" in f["detail"] for f in flags)
+    assert not R.veto_triggered(flags)

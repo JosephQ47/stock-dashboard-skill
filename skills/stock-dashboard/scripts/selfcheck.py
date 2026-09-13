@@ -37,6 +37,16 @@ def verify(computed: dict) -> dict:
     if float(computed.get("completeness") or 0) < 0.70 and not computed.get("blocked"):
         issues.append("完备率低于 70% 但未标记阻断")
 
+    # 反方向同样要查：数据已经被 compute.run() 判定为 blocked（行情缺失、财务
+    # 缺失或完备率不足），却仍然给出一个非「回避」的自信结论，或者仍然带着价位——
+    # 这正是本该被挡下、却漏网的那种「拿不完整数据装满仓」的报告。
+    if computed.get("blocked"):
+        verdict = (computed.get("matrix") or {}).get("verdict")
+        if verdict != scoring.VERDICT_AVOID:
+            issues.append(f"数据被阻断但结论不是回避: {verdict}")
+        if computed.get("prices"):
+            issues.append("数据被阻断但仍给出买入区间/目标价/止损价等价位")
+
     if not computed.get("data_sources"):
         issues.append("缺少数据来源记录")
 
