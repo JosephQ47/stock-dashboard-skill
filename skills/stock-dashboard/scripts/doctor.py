@@ -18,8 +18,8 @@ import endpoints
 from http_client import HttpClient, SourceDown
 
 
-def _row(name, ok, detail):
-    return {"name": name, "ok": bool(ok), "detail": str(detail)}
+def _row(name, ok, detail, critical=False):
+    return {"name": name, "ok": bool(ok), "detail": str(detail), "critical": critical}
 
 
 def check_interpreter() -> dict:
@@ -27,7 +27,7 @@ def check_interpreter() -> dict:
     in_venv = sys.prefix != sys.base_prefix
     ok = in_venv and "anaconda3" not in exe.lower()
     detail = exe if ok else f"{exe}（应使用 {endpoints.VENV_PYTHON}）"
-    return _row("解释器", ok, detail)
+    return _row("解释器", ok, detail, critical=True)
 
 
 def check_imports() -> list[dict]:
@@ -41,24 +41,25 @@ def check_imports() -> list[dict]:
     return out
 
 
-def check_network() -> dict:
-    client = HttpClient()
+def check_network(client: HttpClient) -> dict:
     try:
         client.get(endpoints.TENCENT_QUOTE.format(symbol="sh600519"), source="tencent")
-        return _row("网络连通", True, "可访问外网")
+        return _row("网络连通", True, "可访问外网", critical=True)
     except SourceDown as exc:
-        return _row("网络连通", False, f"{exc}。若在沙箱中运行，需放开网络权限")
+        return _row("网络连通", False, f"{exc}。若在沙箱中运行，需放开网络权限", critical=True)
 
 
-def check_sources() -> list[dict]:
-    client = HttpClient()
+def check_sources(client: HttpClient) -> list[dict]:
     out = []
 
     def probe(name, source, fn):
         try:
             out.append(_row(name, True, fn()))
         except Exception as exc:
-            out.append(_row(name, False, f"{type(exc).__name__}: {str(exc)[:60]}"))
+            detail = f"{type(exc).__name__}: {str(exc)[:60]}"
+            if client.is_tripped(source):
+                detail = f"{detail} (已熔断)"
+            out.append(_row(name, False, detail))
 
     probe("腾讯 A股行情", "tencent", lambda: _tencent(client, "sh600519"))
     probe("腾讯 港股行情", "tencent", lambda: _tencent(client, "hk00700"))
@@ -141,14 +142,15 @@ def _eastmoney(client):
 
 
 def run() -> dict:
+    client = HttpClient()
     checks = [check_interpreter()]
     checks += check_imports()
-    net = check_network()
+    net = check_network(client)
     checks.append(net)
     if net["ok"]:
-        checks += check_sources()
-    usable = [c["name"] for c in checks if c["ok"] and c["name"] not in ("解释器", "网络连通")]
-    critical = [c for c in checks if c["name"] in ("解释器", "网络连通") and not c["ok"]]
+        checks += check_sources(client)
+    usable = [c["name"] for c in checks if c["ok"] and not c.get("critical", False)]
+    critical = [c for c in checks if c.get("critical", False) and not c["ok"]]
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "checks": checks,
