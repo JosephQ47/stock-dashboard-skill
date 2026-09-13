@@ -167,3 +167,319 @@ def test_missing_data_does_not_hit():
     flags = {f["code"]: f for f in R.check_red_flags(fin)}
     assert not flags["CASH_PROFIT"]["hit"]
     assert "未获取到" in flags["CASH_PROFIT"]["detail"]
+
+
+# 边界值测试：确保边界值本身不命中（所有比较都是严格的）
+def test_cash_to_profit_boundary_0_7_does_not_hit():
+    fin = _clean_fin()
+    fin["cfo"] = 70
+    fin["net_profit"] = 100
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["CASH_PROFIT"]["hit"]
+
+
+def test_cash_to_profit_boundary_below_0_7_hits():
+    fin = _clean_fin()
+    fin["cfo"] = 69
+    fin["net_profit"] = 100
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["CASH_PROFIT"]["hit"]
+
+
+def test_accrual_boundary_0_10_does_not_hit():
+    fin = _clean_fin()
+    fin["net_profit"] = 100
+    fin["cfo"] = 90
+    fin["total_assets"] = 1000
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["ACCRUAL"]["hit"]
+
+
+def test_accrual_boundary_above_0_10_hits():
+    fin = _clean_fin()
+    fin["net_profit"] = 191
+    fin["cfo"] = 90
+    fin["total_assets"] = 1000
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["ACCRUAL"]["hit"]
+
+
+def test_receivable_boundary_20_does_not_hit():
+    fin = _clean_fin()
+    fin["ar_growth"] = 30
+    fin["revenue_growth"] = 10
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["RECEIVABLE"]["hit"]
+
+
+def test_receivable_boundary_above_20_hits():
+    fin = _clean_fin()
+    fin["ar_growth"] = 31
+    fin["revenue_growth"] = 10
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["RECEIVABLE"]["hit"]
+
+
+def test_goodwill_boundary_0_30_does_not_hit():
+    fin = _clean_fin()
+    fin["goodwill"] = 300
+    fin["net_assets"] = 1000
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["GOODWILL"]["hit"]
+
+
+def test_goodwill_boundary_above_0_30_hits():
+    fin = _clean_fin()
+    fin["goodwill"] = 301
+    fin["net_assets"] = 1000
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["GOODWILL"]["hit"]
+
+
+def test_recurring_boundary_0_70_does_not_hit():
+    fin = _clean_fin()
+    fin["deducted_profit"] = 70
+    fin["net_profit"] = 100
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["RECURRING"]["hit"]
+
+
+def test_recurring_boundary_below_0_70_hits():
+    fin = _clean_fin()
+    fin["deducted_profit"] = 69
+    fin["net_profit"] = 100
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["RECURRING"]["hit"]
+
+
+def test_pledge_boundary_50_does_not_hit():
+    fin = _clean_fin()
+    fin["pledge_ratio"] = 50
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["PLEDGE"]["hit"]
+    assert not flags["PLEDGE"]["veto"]
+
+
+def test_pledge_boundary_above_50_is_veto():
+    fin = _clean_fin()
+    fin["pledge_ratio"] = 51
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["PLEDGE"]["hit"]
+    assert flags["PLEDGE"]["veto"]
+
+
+# 缺失数据测试：所有十个标志
+def test_cash_profit_missing_empty_string():
+    fin = _clean_fin()
+    fin["cfo"] = ""
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["CASH_PROFIT"]["hit"]
+    assert "未获取到" in flags["CASH_PROFIT"]["detail"]
+
+
+def test_cash_profit_missing_placeholder_dash():
+    fin = _clean_fin()
+    fin["cfo"] = "--"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["CASH_PROFIT"]["hit"]
+    assert "未获取到" in flags["CASH_PROFIT"]["detail"]
+
+
+def test_accrual_missing_empty_string():
+    fin = _clean_fin()
+    fin["cfo"] = ""
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["ACCRUAL"]["hit"]
+    assert "未获取到" in flags["ACCRUAL"]["detail"]
+
+
+def test_receivable_missing_na():
+    fin = _clean_fin()
+    fin["ar_growth"] = "N/A"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["RECEIVABLE"]["hit"]
+    assert "未获取到" in flags["RECEIVABLE"]["detail"]
+
+
+def test_goodwill_missing_nan():
+    fin = _clean_fin()
+    fin["goodwill"] = "nan"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["GOODWILL"]["hit"]
+    assert "未获取到" in flags["GOODWILL"]["detail"]
+
+
+def test_recurring_missing_none():
+    fin = _clean_fin()
+    fin["deducted_profit"] = "None"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["RECURRING"]["hit"]
+    assert "未获取到" in flags["RECURRING"]["detail"]
+
+
+def test_big_deposit_loan_missing_whitespace():
+    fin = _clean_fin()
+    fin["cash"] = "  "
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["BIG_DEPOSIT_LOAN"]["hit"]
+    assert "未获取到" in flags["BIG_DEPOSIT_LOAN"]["detail"]
+
+
+def test_audit_opinion_missing_empty_string_not_veto():
+    """Empty audit_opinion should not trigger veto."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = ""
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"]
+    assert not flags["AUDIT_OPINION"]["veto"]
+    assert "未获取到" in flags["AUDIT_OPINION"]["detail"]
+
+
+def test_audit_opinion_missing_dash():
+    fin = _clean_fin()
+    fin["audit_opinion"] = "--"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"]
+    assert not flags["AUDIT_OPINION"]["veto"]
+    assert "未获取到" in flags["AUDIT_OPINION"]["detail"]
+
+
+def test_audit_opinion_clean_variant_无保留意见():
+    """'无保留意见' should not trigger veto."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "无保留意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"]
+    assert not flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_clean_variant_无保留():
+    """'无保留' alone should not trigger veto."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "无保留"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["AUDIT_OPINION"]["hit"]
+    assert not flags["AUDIT_OPINION"]["veto"]
+
+
+def test_audit_opinion_qualified_hits_and_vetos():
+    """'保留意见' without '无保留' should trigger veto."""
+    fin = _clean_fin()
+    fin["audit_opinion"] = "保留意见"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["AUDIT_OPINION"]["hit"]
+    assert flags["AUDIT_OPINION"]["veto"]
+
+
+def test_delisting_risk_missing_empty_string_not_veto():
+    """Empty delisting_risk should not trigger veto."""
+    fin = _clean_fin()
+    fin["delisting_risk"] = ""
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["DELISTING_RISK"]["hit"]
+    assert not flags["DELISTING_RISK"]["veto"]
+    assert "未获取到" in flags["DELISTING_RISK"]["detail"]
+
+
+def test_delisting_risk_string_false_not_hit():
+    """String 'False' should parse as False (no hit)."""
+    fin = _clean_fin()
+    fin["delisting_risk"] = "False"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["DELISTING_RISK"]["hit"]
+    assert not flags["DELISTING_RISK"]["veto"]
+
+
+def test_delisting_risk_string_否_not_hit():
+    """String '否' should parse as False (no hit)."""
+    fin = _clean_fin()
+    fin["delisting_risk"] = "否"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["DELISTING_RISK"]["hit"]
+    assert not flags["DELISTING_RISK"]["veto"]
+
+
+def test_delisting_risk_string_0_not_hit():
+    """String '0' should parse as False (no hit)."""
+    fin = _clean_fin()
+    fin["delisting_risk"] = "0"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["DELISTING_RISK"]["hit"]
+    assert not flags["DELISTING_RISK"]["veto"]
+
+
+def test_delisting_risk_string_true_hits_and_vetos():
+    """String 'true' should parse as True (hit + veto)."""
+    fin = _clean_fin()
+    fin["delisting_risk"] = "true"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["DELISTING_RISK"]["hit"]
+    assert flags["DELISTING_RISK"]["veto"]
+
+
+def test_investigation_missing_whitespace_not_veto():
+    """Whitespace-only investigation should not trigger veto."""
+    fin = _clean_fin()
+    fin["under_investigation"] = "   "
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["INVESTIGATION"]["hit"]
+    assert not flags["INVESTIGATION"]["veto"]
+    assert "未获取到" in flags["INVESTIGATION"]["detail"]
+
+
+def test_investigation_string_false_not_hit():
+    """String 'False' should parse as False (no hit)."""
+    fin = _clean_fin()
+    fin["under_investigation"] = "False"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["INVESTIGATION"]["hit"]
+    assert not flags["INVESTIGATION"]["veto"]
+
+
+def test_investigation_string_yes_hits_and_vetos():
+    """String 'yes' should parse as True (hit + veto)."""
+    fin = _clean_fin()
+    fin["under_investigation"] = "yes"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert flags["INVESTIGATION"]["hit"]
+    assert flags["INVESTIGATION"]["veto"]
+
+
+def test_pledge_missing_na():
+    fin = _clean_fin()
+    fin["pledge_ratio"] = "N/A"
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["PLEDGE"]["hit"]
+    assert not flags["PLEDGE"]["veto"]
+    assert "未获取到" in flags["PLEDGE"]["detail"]
+
+
+# 零分母情况（值存在但为零）
+def test_zero_denominator_accrual_not_missing():
+    """Zero total_assets should report '总资产为零', not MISSING."""
+    fin = _clean_fin()
+    fin["total_assets"] = 0
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["ACCRUAL"]["hit"]
+    assert "总资产为零" in flags["ACCRUAL"]["detail"]
+    assert "未获取到" not in flags["ACCRUAL"]["detail"]
+
+
+def test_zero_denominator_goodwill_not_missing():
+    """Zero net_assets should report distinct detail, not MISSING."""
+    fin = _clean_fin()
+    fin["net_assets"] = 0
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["GOODWILL"]["hit"]
+    assert "净资产为零" in flags["GOODWILL"]["detail"]
+    assert "未获取到" not in flags["GOODWILL"]["detail"]
+
+
+def test_zero_denominator_recurring_not_missing():
+    """Zero net_profit should report distinct detail."""
+    fin = _clean_fin()
+    fin["net_profit"] = 0
+    flags = {f["code"]: f for f in R.check_red_flags(fin)}
+    assert not flags["RECURRING"]["hit"]
+    assert "归母净利润为零" in flags["RECURRING"]["detail"]
+    assert "未获取到" not in flags["RECURRING"]["detail"]
