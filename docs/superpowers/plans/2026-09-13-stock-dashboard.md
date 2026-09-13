@@ -2059,7 +2059,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `sources_cn.fetch_financials(norm) -> dict`：三表关键科目与派生字段，缺失填 `None`
   - `sources_cn.fetch_market_extras(client, norm) -> dict`：龙虎榜、两融、解禁，失败返回 `{"available": False, "reason": str}`
 
-降级链严格按 spec：行情 腾讯 → 新浪 → 东财；K 线 baostock → 腾讯 → 东财；三表 akshare 新浪源 → akshare 同花顺源。
+降级链：行情 腾讯 → 东财；K 线 baostock → 东财；三表 akshare 新浪源。
+
+注意本节代码实现的是两级降级，与 spec 第 4.2 节描述的三级链不同。差异是有意的：新浪与腾讯在行情上覆盖重合，同花顺源在实测中不比新浪源稳定，多加一级只增加失败面而不增加可用性。东财始终排在最后，因为实测证明它会整体性限流。
+
+北交所（CN_BJ）在三表环节无可用源，`stock_financial_report_sina` 对 `bj` 与 `sz` 两种前缀均抛 TypeError。必须前置识别并返回结构化不可用，不得发起注定失败的请求。
+
+已知限制：akshare 内部自行发起 HTTP 请求，绕开 `HttpClient`。这些调用不计入东财 10 次上限、不受 2 秒下限约束、失败也不会触发熔断。需在模块 docstring 中写明，让读者知道限速器只覆盖直接调用。
 
 - [ ] **Step 1: 实现 sources_cn.py**
 
