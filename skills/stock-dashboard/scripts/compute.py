@@ -59,6 +59,14 @@ FIELD_MAP = {
     },
 }
 
+# selfcheck 要求 `prices` 里每个价位子块都带 `formula`，但 `prices["valuation"]`
+# 不是价位——它是估值锚的参数块（current_pe_ttm/pe25/pe75/low/high 等），本身
+# 的推导过程已经写进了 buy_range 的 formula 里，不需要再单独背一份推导式。
+# 用「白名单排除」而不是「白名单收录」：新增的价位子块（比如以后加一个
+# support/second_target）默认就要求带 formula，只有明确写进这个集合的参数块
+# 才被豁免，不会出现「加了新价位却忘了让 selfcheck 覆盖它」的静默漏检。
+NON_PRICE_LEVEL_PRICE_BLOCKS = frozenset({"valuation"})
+
 # A 股财报季度、年度混杂在同一张表里，年报以「报告日」以 1231 结尾识别；
 # 港股/美股走 yfinance 默认只返回年度数据（财年结束日不一定是 12-31，例如
 # 苹果是 09-30），因此不按后缀筛选，全部当年度处理。
@@ -544,6 +552,11 @@ def run(raw: dict) -> dict:
         "prices": prices,
         "price_error": price_error,
         "data_sources": raw.get("data_sources"),
+        # extras 原样透传：A 股是龙虎榜/两融/解禁，港股/美股是「此项不适用于该
+        # 市场」的结构化说明（available=False 且 reason 明确写着「不适用」，
+        # 不是抓取失败）。看板模板第 7 节直接渲染这个块，必须能只从 computed
+        # JSON 里拿到，不依赖 raw JSON；原样传递以保留其 source/fetched_at。
+        "extras": raw.get("extras"),
     }
 
 

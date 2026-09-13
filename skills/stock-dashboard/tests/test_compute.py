@@ -212,6 +212,67 @@ def test_run_not_blocked_still_prices_normally():
     assert "数据被阻断" not in (result["matrix"].get("conflict") or "")
 
 
+# ---- run(): extras 必须原样透传到 computed，不能在 raw -> computed 之间丢失 ----
+
+def test_run_carries_extras_through_for_cn():
+    extras = {
+        "available": True,
+        "source": "akshare",
+        "fetched_at": "2026-09-13T00:00:00",
+        "dragon_tiger": {"hit": False},
+        "margin_trading": {"available": True},
+        "lockup": {"available": True},
+    }
+    raw = {
+        "code": "600519", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": _cn_fin_block(),
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+        "extras": extras,
+    }
+    result = C.run(raw)
+    assert result["extras"] == extras
+    assert result["extras"]["source"] == "akshare"
+    assert result["extras"]["fetched_at"] == "2026-09-13T00:00:00"
+
+
+def test_run_carries_extras_through_for_us_inapplicable():
+    # 港股/美股没有龙虎榜/两融/解禁这套 A 股特有机制：extras 应该是「不适用于
+    # 该市场」的结构化说明，而不是抓取失败的「缺失」，两者的区别必须能只从
+    # computed JSON 里看出来。
+    extras = {
+        "available": False,
+        "reason": "A 股专属数据，当前市场不适用",
+        "source": "n/a",
+        "fetched_at": "2026-09-13T19:27:00",
+    }
+    raw = {
+        "code": "AAPL", "market": "US", "currency": "USD",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": {},
+        "data_sources": {"kline": "yfinance"},
+        "extras": extras,
+    }
+    result = C.run(raw)
+    assert result["extras"] == extras
+    assert result["extras"]["available"] is False
+    assert "不适用" in result["extras"]["reason"]
+
+
+def test_run_missing_extras_is_none_not_crash():
+    raw = {
+        "code": "600519", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": _cn_fin_block(),
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+    }
+    result = C.run(raw)
+    assert result["extras"] is None
+
+
 # ---- derive_valuation_anchor(): PE 五年分位估值锚 ----
 
 def _pe_block(pe_history, current_pe, days_used=None, available=True, reason=None):

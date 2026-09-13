@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import compute
 import scoring
 
 
@@ -27,7 +28,15 @@ def verify(computed: dict) -> dict:
         if computed["matrix"]["verdict"] != scoring.VERDICT_AVOID:
             issues.append("触发否决但结论不是回避")
 
+    # `prices` 里混着两类子块：buy_range/target/stop_loss 这类用户要据以下单的
+    # 价位，和 valuation 这个估值锚参数块（current_pe_ttm/pe25/pe75/low/high
+    # 等）——后者的推导过程已经写进 buy_range 的 formula 里，本身不需要单独一份
+    # 推导式。用 compute.NON_PRICE_LEVEL_PRICE_BLOCKS 白名单排除已知的参数块，
+    # 而不是白名单收录已知的价位块：这样以后 compute.py 新增任何价位子块，
+    # 默认就会被本检查覆盖，只有显式加入那个排除集合才会被跳过，不会静默漏检。
     for name, block in (computed.get("prices") or {}).items():
+        if name in compute.NON_PRICE_LEVEL_PRICE_BLOCKS:
+            continue
         if not block.get("formula"):
             issues.append(f"{name} 缺少推导式")
 

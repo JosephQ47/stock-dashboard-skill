@@ -53,6 +53,58 @@ def test_price_without_formula_is_issue():
     assert any("推导式" in i for i in r["issues"])
 
 
+# ---- prices["valuation"] 是估值锚参数块，不是价位，不该被要求带 formula ----
+
+def test_valuation_block_without_formula_is_not_an_issue():
+    r = SC.verify(_base_computed(prices={
+        "buy_range": {"formula": "f"},
+        "valuation": {
+            "current_pe_ttm": 30.0, "current_pe_percentile": 40.0,
+            "pe25": 25.0, "pe75": 35.0, "days_used": 1220,
+            "days_required_for_5y": 1220, "source": "akshare",
+            "fetched_at": "2026-09-13T00:00:00",
+            "low": 90.0, "high": 110.0,
+        },
+    }))
+    assert r["ok"]
+    assert r["issues"] == []
+
+
+def test_valuation_unavailable_block_without_formula_is_not_an_issue():
+    # PE 数据不可用时 valuation 退化为 {"available": False, "reason": ...}，
+    # 同样不需要 formula。
+    r = SC.verify(_base_computed(prices={
+        "buy_range": {"formula": "f"},
+        "valuation": {"available": False, "reason": "当前 PE(TTM) 未获取到"},
+    }))
+    assert r["ok"]
+    assert r["issues"] == []
+
+
+def test_target_still_requires_formula_even_with_valuation_present():
+    # 真正的价位块（这里是 target）漏了 formula 时，即便 valuation 被豁免，
+    # selfcheck 也必须照样能查出来——不能因为加了豁免就连带放过其它价位块。
+    r = SC.verify(_base_computed(prices={
+        "buy_range": {"formula": "f"},
+        "valuation": {"low": 90.0, "high": 110.0},
+        "target": {"price": 100.0},
+    }))
+    assert not r["ok"]
+    assert any("target" in i and "推导式" in i for i in r["issues"])
+
+
+def test_new_unknown_price_block_without_formula_is_still_caught():
+    # 白名单排除机制：不在 compute.NON_PRICE_LEVEL_PRICE_BLOCKS 里的任何新
+    # 子块（模拟以后新增的一个价位类型），只要缺 formula 就必须被抓到，不能
+    # 因为它不认识这个名字就放过。
+    r = SC.verify(_base_computed(prices={
+        "buy_range": {"formula": "f"},
+        "second_target": {"price": 200.0},
+    }))
+    assert not r["ok"]
+    assert any("second_target" in i and "推导式" in i for i in r["issues"])
+
+
 def test_gate_with_buy_verdict_is_issue():
     r = SC.verify(_base_computed(gates=["RSI 超买"], matrix={"verdict": S.VERDICT_BUY}))
     assert not r["ok"]
