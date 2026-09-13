@@ -22,14 +22,17 @@ def fetch_quote(client, norm) -> dict:
     if norm["market"].value == "HK":
         try:
             r = client.get(endpoints.TENCENT_QUOTE.format(symbol=norm["tencent"]), source="tencent")
-            parts = r.text.split("~")
-            if len(parts) > 3:
-                return {
-                    "price": float(parts[3]),
-                    "name": parts[1],
-                    "source": "腾讯 qt.gtimg.cn",
-                    "fetched_at": _now(),
-                }
+            try:
+                parts = r.text.split("~")
+                if len(parts) > 3:
+                    return {
+                        "price": float(parts[3]),
+                        "name": parts[1],
+                        "source": "腾讯 qt.gtimg.cn",
+                        "fetched_at": _now(),
+                    }
+            except (ValueError, IndexError):
+                pass
         except SourceDown:
             pass
 
@@ -141,7 +144,6 @@ def fetch_financials(norm) -> dict:
             "income": _transpose_statement(inc),
             "cashflow": _transpose_statement(cf),
             "unavailable_checks": dict(STRUCTURALLY_UNAVAILABLE_FLAGS),
-            "info_keys": sorted(list(t.info.keys()))[:20] if hasattr(t, "info") else [],
         })
     except Exception as exc:
         out["reason"] = f"{type(exc).__name__}: {str(exc)[:80]}"

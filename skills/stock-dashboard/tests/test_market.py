@@ -22,6 +22,10 @@ def test_identify_beijing():
     assert identify("830799") == Market.CN_BJ
 
 
+def test_identify_beijing_920_prefix():
+    assert identify("920819") == Market.CN_BJ
+
+
 def test_identify_hk_five_digit():
     assert identify("00700") == Market.HK
 
@@ -76,3 +80,26 @@ def test_normalize_us_fields():
 
 def test_normalize_keeps_raw():
     assert normalize("HK00700")["raw"] == "HK00700"
+
+
+def test_identify_trailing_suffix_sh():
+    assert identify("600519.SH") == Market.CN_SH
+
+
+def test_normalize_trailing_suffix_sh():
+    r = normalize("600519.SH")
+    assert r["code"] == "600519"
+    assert r["market"] == Market.CN_SH
+    assert r["tencent"] == "sh600519"
+
+
+def test_identify_trailing_suffix_sz():
+    assert identify("000001.SZ") == Market.CN_SZ
+
+
+def test_identify_trailing_suffix_bj():
+    assert identify("920819.BJ") == Market.CN_BJ
+
+
+def test_identify_trailing_suffix_hk():
+    assert identify("00700.HK") == Market.HK

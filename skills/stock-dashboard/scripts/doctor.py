@@ -18,8 +18,18 @@ import endpoints
 from http_client import HttpClient, SourceDown
 
 
-def _row(name, ok, detail, critical=False):
-    return {"name": name, "ok": bool(ok), "detail": str(detail), "critical": critical}
+def _row(name, ok, detail, critical=False, pipeline_used=True):
+    return {
+        "name": name,
+        "ok": bool(ok),
+        "detail": str(detail),
+        "critical": critical,
+        # pipeline_used=False 表示：本项只是 doctor 自身发起的探测，取数流水线
+        # （fetch_data.py 及其调用的 sources_cn/sources_hk_us）里没有任何 fetcher
+        # 真正使用这个数据源；探测成功只能说明该接口本身能连上，不代表看板会
+        # 用到它。CNINFO_SEARCH、SEC_SUBMISSIONS 目前正是这种情况。
+        "pipeline_used": pipeline_used,
+    }
 
 
 def check_interpreter() -> dict:
@@ -52,22 +62,26 @@ def check_network(client: HttpClient) -> dict:
 def check_sources(client: HttpClient) -> list[dict]:
     out = []
 
-    def probe(name, source, fn):
+    def probe(name, source, fn, pipeline_used=True):
         try:
-            out.append(_row(name, True, fn()))
+            out.append(_row(name, True, fn(), pipeline_used=pipeline_used))
         except Exception as exc:
             detail = f"{type(exc).__name__}: {str(exc)[:60]}"
             if client.is_tripped(source):
                 detail = f"{detail} (已熔断)"
-            out.append(_row(name, False, detail))
+            out.append(_row(name, False, detail, pipeline_used=pipeline_used))
 
     probe("腾讯 A股行情", "tencent", lambda: _tencent(client, "sh600519"))
     probe("腾讯 港股行情", "tencent", lambda: _tencent(client, "hk00700"))
     probe("baostock K线", "baostock", _baostock)
     probe("akshare 新浪三表", "sina", _akshare_statement)
     probe("yfinance 美股", "yahoo", _yfinance)
-    probe("SEC submissions", "sec", lambda: _sec(client))
-    probe("巨潮 公告", "cninfo", lambda: _cninfo(client))
+    # 以下两项只被本文件自身的探测函数调用，取数流水线（sources_cn.py /
+    # sources_hk_us.py 的任何 fetcher）没有引用 SEC_SUBMISSIONS 或
+    # CNINFO_SEARCH：探测成功只说明接口可连通，不代表看板会用到它，
+    # 因此标记为 pipeline_used=False，不计入「流水线可用数据源」。
+    probe("SEC submissions（仅探测，流水线未使用）", "sec", lambda: _sec(client), pipeline_used=False)
+    probe("巨潮 公告（仅探测，流水线未使用）", "cninfo", lambda: _cninfo(client), pipeline_used=False)
     probe("东财 K线", "eastmoney", lambda: _eastmoney(client))
     return out
 
@@ -149,12 +163,20 @@ def run() -> dict:
     checks.append(net)
     if net["ok"]:
         checks += check_sources(client)
-    usable = [c["name"] for c in checks if c["ok"] and not c.get("critical", False)]
+    usable = [
+        c["name"] for c in checks
+        if c["ok"] and not c.get("critical", False) and c.get("pipeline_used", True)
+    ]
+    probed_only = [
+        c["name"] for c in checks
+        if c["ok"] and not c.get("critical", False) and not c.get("pipeline_used", True)
+    ]
     critical = [c for c in checks if c.get("critical", False) and not c["ok"]]
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "checks": checks,
         "usable_sources": usable,
+        "probed_only_sources": probed_only,
         "ok": not critical,
     }
 
@@ -176,7 +198,12 @@ def main():
         mark = "可用" if c["ok"] else "失败"
         print(f"{c['name']:<20} {mark:<6} {c['detail']}")
     print("-" * 62)
-    print(f"可用数据源 {len(report['usable_sources'])} 项")
+    print(f"流水线实际使用的可用数据源 {len(report['usable_sources'])} 项")
+    if report["probed_only_sources"]:
+        print(
+            f"仅探测、流水线未使用 {len(report['probed_only_sources'])} 项："
+            + "、".join(report["probed_only_sources"])
+        )
     if not report["ok"]:
         print("关键项失败，先解决解释器或网络问题再取数")
     return 0 if report["ok"] else 1

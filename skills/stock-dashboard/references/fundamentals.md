@@ -25,11 +25,11 @@
 
 ## 一票否决红旗小结
 
-六条否决条件里有四条来自上表（`BIG_DEPOSIT_LOAN`、`AUDIT_OPINION`、
-`PLEDGE`、`DELISTING_RISK`、`INVESTIGATION` ——实际是五个标记里除
-`CASH_PROFIT` 特殊条件外全部具备 veto 能力，加上 `CASH_PROFIT` 在满足
-「连续两年低于 0.5」的特殊条件时也触发否决，共六条否决触发路径，对应
-scoring.md 中列出的六条）。
+六条否决触发路径中，五条来自无条件即触发否决的标记：`BIG_DEPOSIT_LOAN`、
+`AUDIT_OPINION`、`PLEDGE`、`DELISTING_RISK`、`INVESTIGATION`——这五项命中
+即一票否决，与其他条件无关；第六条来自 `CASH_PROFIT`，它平时不具备 veto
+能力，只有在满足「连续两年低于 0.5」这一特殊条件时才额外触发否决。合计六
+条否决触发路径，对应 scoring.md 中列出的六条。
 
 ## 未获取到 ≠ 已核查且清白（关键限制）
 

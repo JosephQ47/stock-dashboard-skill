@@ -19,11 +19,8 @@ EM_KLINE = (
     "?secid={secid}&klt=101&fqt=1&beg={beg}&end={end}"
     "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57"
 )
-EM_DATACENTER = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 CNINFO_SEARCH = "http://www.cninfo.com.cn/new/information/topSearch/query"
-CNINFO_ANNOUNCE = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 SEC_SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
-SEC_CONCEPT = "https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{tag}.json"
 
 EM_MIN_INTERVAL = 2.0
 EM_MAX_CALLS = 10

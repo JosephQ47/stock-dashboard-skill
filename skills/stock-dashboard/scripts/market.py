@@ -29,6 +29,11 @@ _RE_US = re.compile(r"^[A-Z][A-Z.\-]{0,6}$")
 
 def _strip(code: str) -> str:
     c = code.strip().upper()
+    for suf in (".SH", ".SZ", ".BJ", ".HK"):
+        if c.endswith(suf) and len(c) > len(suf):
+            rest = c[: -len(suf)]
+            if rest.isdigit():
+                return rest
     for p in ("HK.", "HK", "SH.", "SH", "SZ.", "SZ", "BJ.", "BJ"):
         if c.startswith(p) and len(c) > len(p):
             rest = c[len(p):]
@@ -45,7 +50,7 @@ def identify(code: str) -> Market:
             return Market.CN_SH
         if head in ("0", "3"):
             return Market.CN_SZ
-        if head in ("4", "8"):
+        if head in ("4", "8") or c.startswith("920"):
             return Market.CN_BJ
         raise ValueError(f"无法识别的 A 股代码: {code}")
     if _RE_HK.match(c):

@@ -60,8 +60,9 @@ D:\Economics\金融分析\.venv\Scripts\python.exe
 **Step 4 分析**：按需读取 `references/scoring.md`（评分口径）、
 `references/fundamentals.md`（排雷红旗定义）、`references/technicals.md`
 （技术指标解读）、`references/market-cn.md` 或 `references/market-hk-us.md`
-（对应市场特有项）；据此解读第 3 步的计算结果，识别两轴矛盾，列出多空理
-由，标注硬数据与软数据。
+（对应市场特有项）、`references/data-sources.md`（限流器绕开点与北向数据
+停发等数据源层面的硬约束）；据此解读第 3 步的计算结果，识别两轴矛盾，列
+出多空理由，标注硬数据与软数据。
 
 **Step 5 输出**：运行 `python scripts/selfcheck.py --in <代码>_computed.json`
 做出报前抽检；随后依 `references/output-template.md` 的模板结构，把报告写
@@ -111,6 +112,11 @@ D:\Economics\金融分析\.venv\Scripts\python.exe
   节落实，不得省略章节
 - 聊天回复只给一张摘要卡片（双轴分数、矩阵结论、一句话理由、三个价位）与
   文件路径，不在聊天里粘贴报告全文
+- 摘要卡片必须再加一行「证据说明」（仍为一行，不展开）：本次十条红旗实际
+  核查到几条、五个质量维度实际算出几个、一票否决机制本次是否处于有效状
+  态（即本次是否有具备否决权的红旗被实际核查到，而不只是「未获取到」）。
+  这行不是可选项，缺了就等于让用户拿着一个看起来完整、实则只验证了部分维
+  度的分数去做决策
 
 ## 7. 已知局限（据实说明，不得回避）
 
@@ -122,6 +128,9 @@ D:\Economics\金融分析\.venv\Scripts\python.exe
   实测中 600519 十条里能实际核查 3 条，AAPL 能核查 4 条
 - 质量轴 Q 的五个维度中，护城河与估值水平这两项目前没有实现计算，分数只
   由财报排雷、盈利能力与成长、财务健康这三个维度构成，看板中须如实说明
+- 时机轴 T 的五个维度中，trend（趋势）、momentum（动量）、volume（量能与
+  资金）、position（位置）已实现，`catalyst`（催化与情绪，占 10 分权重）
+  从未计算，详见 `references/scoring.md`，看板中须如实说明
 - 估值锚（PE 五年分位）目前只对 A 股有效；港股与美股没有对应的历史 PE 数
   据源，第 8 节买入区间只能基于技术锚给出，不得用现价百分比冒充估值支持
 - 北交所股票没有可用的财务报表数据源
