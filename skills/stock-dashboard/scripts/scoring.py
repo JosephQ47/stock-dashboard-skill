@@ -38,9 +38,9 @@ def _weighted(dims, weights):
     if not present:
         return {"score": 0.0, "breakdown": {}, "missing": list(weights)}
     total_weight = sum(weights[k] for k in present)
-    breakdown = {k: float(present[k]) * weights[k] / 100.0 for k in present}
     raw = sum(float(present[k]) * weights[k] for k in present)
     score = raw / total_weight
+    breakdown = {k: float(present[k]) * weights[k] / total_weight for k in present}
     return {"score": round(score, 2), "breakdown": breakdown, "missing": missing}
 
 
@@ -78,6 +78,9 @@ def map_matrix(q: float, t: float, veto: bool) -> dict:
     if q_high and not t_high:
         conflict = f"基本面达标（Q {q:.0f}）但技术面未转好（T {t:.0f}），等趋势确认再谈"
     elif t_high and not q_high:
-        conflict = f"技术面强势（T {t:.0f}）但基本面不达标（Q {q:.0f}），是博弈不是投资"
+        if q >= SPECULATION_FLOOR:
+            conflict = f"技术面强势（T {t:.0f}）但基本面不达标（Q {q:.0f}），是博弈不是投资"
+        else:
+            conflict = f"技术面强势（T {t:.0f}）但基本面太弱不足投资（Q {q:.0f}），坚决回避"
 
     return {"verdict": verdict, "conflict": conflict}

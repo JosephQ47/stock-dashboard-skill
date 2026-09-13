@@ -49,6 +49,13 @@ def test_quality_breakdown_has_contributions():
     assert r["breakdown"]["statement"] == pytest.approx(15.0)
 
 
+def test_quality_breakdown_sums_to_score_with_partial_dims():
+    dims = {"statement": 100, "profitability": 0}
+    r = S.quality_score(dims)
+    # breakdown sum may have more precision than score (which is rounded to 2 decimals)
+    assert sum(r["breakdown"].values()) == pytest.approx(r["score"], abs=0.01)
+
+
 def test_timing_weighted_correctly():
     dims = {k: 0 for k in S.TIMING_WEIGHTS}
     dims["trend"] = 100
@@ -84,7 +91,9 @@ def test_matrix_low_high_is_avoid():
 
 
 def test_matrix_low_low():
-    assert S.map_matrix(30, 30, False)["verdict"] == "回避"
+    r = S.map_matrix(30, 30, False)
+    assert r["verdict"] == "回避"
+    assert r["conflict"] is None
 
 
 def test_veto_forces_avoid_regardless():
@@ -96,9 +105,18 @@ def test_conflict_reported_when_quality_high_timing_low():
     assert r["conflict"] and "基本面" in r["conflict"]
 
 
-def test_conflict_reported_when_timing_high_quality_low():
+def test_conflict_reported_when_timing_high_quality_low_speculation():
+    r = S.map_matrix(50, 80, False)
+    assert r["verdict"] == "短线博弈，不是投资"
+    assert r["conflict"] and "技术面强势" in r["conflict"]
+    assert "是博弈不是投资" in r["conflict"]
+
+
+def test_conflict_reported_when_timing_high_quality_low_avoid():
     r = S.map_matrix(40, 80, False)
-    assert r["conflict"] and "技术面" in r["conflict"]
+    assert r["verdict"] == "回避"
+    assert r["conflict"] and "技术面强势" in r["conflict"]
+    assert "坚决回避" in r["conflict"]
 
 
 def test_no_conflict_when_aligned():
@@ -111,3 +129,23 @@ def test_boundary_sixty_counts_as_high():
 
 def test_boundary_fortyfive_is_speculation_not_avoid():
     assert S.map_matrix(45, 70, False)["verdict"] == "短线博弈，不是投资"
+
+
+def test_boundary_59_9_high_timing_not_high_quality():
+    assert S.map_matrix(59.9, 60, False)["verdict"] == "短线博弈，不是投资"
+
+
+def test_boundary_60_high_quality_not_high_timing():
+    assert S.map_matrix(60, 59.9, False)["verdict"] == "加入候选池，等技术面转好"
+
+
+def test_boundary_45_high_timing_speculation_floor():
+    assert S.map_matrix(45, 60, False)["verdict"] == "短线博弈，不是投资"
+
+
+def test_boundary_44_9_high_timing_below_speculation_floor():
+    assert S.map_matrix(44.9, 60, False)["verdict"] == "回避"
+
+
+def test_boundary_45_below_high_timing():
+    assert S.map_matrix(45, 59.9, False)["verdict"] == "回避"
