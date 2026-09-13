@@ -863,8 +863,15 @@ def test_ema_equals_sma_at_seed():
 
 
 def test_ema_weights_recent_more():
+    # 必须用凸增序列。对严格线性序列，收敛 EMA 与同窗 SMA 的滞后量
+    # 同为 (period-1)/2，两者恒等，ema > sma 在数学上不成立。
+    convex = [float(i) ** 1.3 for i in range(1, 21)]
+    assert ind.ema(convex, 5) > ind.sma(convex, 5)
+
+
+def test_ema_equals_sma_on_linear_series():
     rising = list(range(1, 21))
-    assert ind.ema(rising, 5) > ind.sma(rising, 5)
+    assert ind.ema(rising, 5) == pytest.approx(ind.sma(rising, 5))
 
 
 def test_rsi_all_gains_is_100():
@@ -873,6 +880,12 @@ def test_rsi_all_gains_is_100():
 
 def test_rsi_all_losses_is_zero():
     assert ind.rsi(list(range(30, 1, -1)), 14) == pytest.approx(0.0)
+
+
+def test_rsi_flat_series_is_neutral():
+    # 一字板与停牌会产生完全走平的序列。涨跌幅均为 0 时必须返回中性 50，
+    # 不能因为 avg_loss 为 0 就判成 100，否则动量维度会给一只毫无动能的票满分。
+    assert ind.rsi([10.0] * 30, 14) == pytest.approx(50.0)
 
 
 def test_rsi_insufficient_returns_none():
