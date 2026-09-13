@@ -1,0 +1,12 @@
+# 虚拟环境
+.venv/
+# 运行时中间产物
+.tmp/
+skills/*/reports/.work/
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+# 编辑器
+.vscode/
+.idea/
