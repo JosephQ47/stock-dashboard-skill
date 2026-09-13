@@ -149,3 +149,11 @@ def test_boundary_44_9_high_timing_below_speculation_floor():
 
 def test_boundary_45_below_high_timing():
     assert S.map_matrix(45, 59.9, False)["verdict"] == "回避"
+
+
+def test_conflict_distinguishes_44_9_from_45_0():
+    conflict_44_9 = S.map_matrix(44.9, 60, False)["conflict"]
+    conflict_45_0 = S.map_matrix(45.0, 60, False)["conflict"]
+    assert conflict_44_9 != conflict_45_0
+    assert "44.9" in conflict_44_9
+    assert "45.0" in conflict_45_0

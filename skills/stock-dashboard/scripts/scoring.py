@@ -76,11 +76,11 @@ def map_matrix(q: float, t: float, veto: bool) -> dict:
 
     conflict = None
     if q_high and not t_high:
-        conflict = f"基本面达标（Q {q:.0f}）但技术面未转好（T {t:.0f}），等趋势确认再谈"
+        conflict = f"基本面达标（Q {q:.1f}）但技术面未转好（T {t:.1f}），等趋势确认再谈"
     elif t_high and not q_high:
         if q >= SPECULATION_FLOOR:
-            conflict = f"技术面强势（T {t:.0f}）但基本面不达标（Q {q:.0f}），是博弈不是投资"
+            conflict = f"技术面强势（T {t:.1f}）但基本面不达标（Q {q:.1f}），是博弈不是投资"
         else:
-            conflict = f"技术面强势（T {t:.0f}）但基本面太弱不足投资（Q {q:.0f}），坚决回避"
+            conflict = f"技术面强势（T {t:.1f}）但基本面太弱不足投资（Q {q:.1f}），坚决回避"
 
     return {"verdict": verdict, "conflict": conflict}
