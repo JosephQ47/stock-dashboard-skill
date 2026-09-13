@@ -18,11 +18,9 @@ def _ema_series(values, period):
         return None
     k = 2.0 / (period + 1)
     seed = sum(float(v) for v in values[:period]) / period
-    ema_val = seed
-    out = []
-    for v in values:
-        ema_val = float(v) * k + ema_val * (1 - k)
-        out.append(ema_val)
+    out = [seed]
+    for v in values[period:]:
+        out.append(float(v) * k + out[-1] * (1 - k))
     return out
 
 
@@ -44,6 +42,8 @@ def rsi(closes, period=14):
     for i in range(period, len(gains)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_gain == 0 and avg_loss == 0:
+        return 50.0
     if avg_loss == 0:
         return 100.0
     if avg_gain == 0:

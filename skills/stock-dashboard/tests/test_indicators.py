@@ -23,8 +23,9 @@ def test_ema_equals_sma_at_seed():
 
 
 def test_ema_weights_recent_more():
-    rising = list(range(1, 21))
-    assert ind.ema(rising, 5) > ind.sma(rising, 5)
+    # Use convex increasing series where EMA genuinely exceeds SMA
+    series = [float(i) ** 1.3 for i in range(1, 21)]
+    assert ind.ema(series, 5) > ind.sma(series, 5)
 
 
 def test_rsi_all_gains_is_100():
@@ -37,6 +38,11 @@ def test_rsi_all_losses_is_zero():
 
 def test_rsi_insufficient_returns_none():
     assert ind.rsi([1, 2, 3], 14) is None
+
+
+def test_rsi_flat_series_is_50():
+    # Flat series (no movement) should return 50 (neutral)
+    assert ind.rsi([10.0] * 20, 14) == pytest.approx(50.0)
 
 
 def test_macd_returns_three_keys():
@@ -68,9 +74,10 @@ def test_bollinger_flat_series_has_zero_width():
 
 
 def test_bollinger_pct_b_at_upper_is_one():
-    closes = [10.0] * 19 + [10.0]
-    r = ind.bollinger(closes, 20)
-    assert 0.0 <= r["pct_b"] <= 1.0
+    # Price at upper band should give pct_b close to 1.0
+    closes = [10.0] * 19 + [10.0 + 2.0 * 0.894427]  # upper = mid + k*sd, with sd≈0.894 for this series
+    r = ind.bollinger(closes, 20, k=2.0)
+    assert r["pct_b"] > 0.95
 
 
 def test_atr_constant_range():
