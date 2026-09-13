@@ -110,6 +110,19 @@ def _transpose_statement(df):
     return rows
 
 
+def fetch_pe_history(norm) -> dict:
+    """港股/美股当前流水线没有五年 PE 历史数据源（yfinance 只给 trailingPE/
+    forwardPE 快照，没有历史序列）。故意返回 available=False 而不是拿现价百
+    分比冒充估值锚——那正是本次要修复的缺陷，不能在这里换个市场重犯一遍。
+    """
+    return {
+        "source": "n/a",
+        "fetched_at": _now(),
+        "available": False,
+        "reason": "yfinance 未提供五年 PE 历史序列，港股/美股当前无法构造基于 PE 分位数的估值锚",
+    }
+
+
 def fetch_financials(norm) -> dict:
     import yfinance as yf
 

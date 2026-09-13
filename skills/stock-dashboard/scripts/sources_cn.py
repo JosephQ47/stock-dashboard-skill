@@ -212,6 +212,57 @@ def fetch_financials(norm) -> dict:
     return out
 
 
+PE_HISTORY_TRADING_DAYS_5Y = 1220  # 约五年交易日数，用于判定历史是否覆盖真正的「五年」
+
+
+def fetch_pe_history(norm) -> dict:
+    """A 股 PE 五年历史，供 compute.py 构造估值锚（PE 分位数）用。
+
+    `akshare.stock_value_em` 内部直接向东财发起 HTTP 请求，不经过
+    `HttpClient`，因此和本模块里其它 akshare 调用一样，不计入东财的 2 秒间隔
+    与 10 次调用上限，也不受熔断保护——这是本文件顶部已经记录过的架构限制，
+    这里再加一笔：该接口本身也会给东财带来一次不计数的请求。
+    """
+    fetched_at = _now()
+    out = {
+        "source": "akshare stock_value_em（东财，绕开 HttpClient 限流器，产生不计数的东财流量）",
+        "fetched_at": fetched_at,
+        "available": False,
+    }
+    import akshare as ak
+    import pandas as pd
+
+    try:
+        df = ak.stock_value_em(symbol=norm["code"])
+    except Exception as exc:
+        out["reason"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+        return out
+
+    if df is None or df.empty or "PE(TTM)" not in df.columns or "数据日期" not in df.columns:
+        out["reason"] = "stock_value_em 返回空数据或缺少 PE(TTM)/数据日期 列"
+        return out
+
+    df = df.sort_values("数据日期")
+    tail = df.tail(PE_HISTORY_TRADING_DAYS_5Y)
+    last_row = df.iloc[-1]
+
+    def _f(v):
+        return None if pd.isna(v) else float(v)
+
+    out.update({
+        "available": True,
+        "days_total": int(len(df)),
+        "days_used": int(len(tail)),
+        "days_required_for_5y": PE_HISTORY_TRADING_DAYS_5Y,
+        "dates": tail["数据日期"].astype(str).tolist(),
+        "pe_ttm_history": [_f(v) for v in tail["PE(TTM)"]],
+        "current_pe_ttm": _f(last_row.get("PE(TTM)")),
+        "current_price": _f(last_row.get("当日收盘价")),
+        "latest_date": str(last_row.get("数据日期")),
+    })
+    return out
+
+
 def fetch_market_extras(client, norm) -> dict:
     if client.is_tripped("eastmoney"):
         return {

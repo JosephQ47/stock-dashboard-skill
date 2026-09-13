@@ -268,6 +268,108 @@ def extract_derived(market, fin_block: dict) -> dict:
     return derived
 
 
+PE_PERCENTILE_TRADING_DAYS_5Y = 1220  # 与 sources_cn.PE_HISTORY_TRADING_DAYS_5Y 对应的口径常量
+
+
+def _percentile(sorted_vals: list[float], pct: float) -> float:
+    """线性插值分位数（与 numpy.percentile 默认方法一致），入参须已排序。"""
+    n = len(sorted_vals)
+    if n == 1:
+        return sorted_vals[0]
+    k = (n - 1) * (pct / 100.0)
+    f, c = math.floor(k), math.ceil(k)
+    if f == c:
+        return sorted_vals[int(k)]
+    return sorted_vals[f] * (c - k) + sorted_vals[c] * (k - f)
+
+
+def _percentile_rank(sorted_vals: list[float], x: float) -> float:
+    """x 在已排序序列中的分位排名（百分比），用于展示「当前 PE 处于历史第几分位」。"""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    count_le = sum(1 for v in sorted_vals if v <= x)
+    return count_le / n * 100.0
+
+
+def derive_valuation_anchor(pe_block: dict | None, current_price, market: str | None):
+    """由 PE 五年历史推导估值锚（25/75 分位对应价格）。
+
+    设计口径：当前 PE 除以分位 PE 等于当前价除以分位价（因为分位计算期间盈利
+    不变），所以分位价 = 现价 × (分位 PE / 当前 PE)，不需要单独取 EPS。
+
+    返回 (val, reason)：
+    - val 非 None 时，是 {"low","high","formula"} 字典，formula 里带当前 PE、
+      分位 PE、历史天数与换算价格，可核对算术；
+    - val 为 None 时，reason 说明具体原因（亏损/PE 异常、历史缺失、港股/美股
+      未接入等），调用方必须让买入区间退化为纯技术锚，而不是编造一个价格
+      百分比式的假估值锚。
+
+    港股/美股当前没有五年 PE 历史数据源，直接返回 (None, 原因)，不做任何替代
+    近似——现价乘固定百分比正是本次要修复的缺陷本身，不能换个市场重犯。
+    """
+    group = _market_group(market)
+    if group != "CN":
+        return None, "港股/美股当前流水线未接入五年 PE 历史数据源，估值锚予以省略（不使用现价百分比近似）"
+
+    if not pe_block or not pe_block.get("available"):
+        reason = (pe_block or {}).get("reason") or "PE 历史数据未获取到"
+        return None, f"PE 历史数据未获取到：{reason}"
+
+    current_pe = pe_block.get("current_pe_ttm")
+    if current_pe is None:
+        return None, "当前 PE(TTM) 未获取到，无法构造估值锚"
+    current_pe = float(current_pe)
+    if current_pe <= 0:
+        return None, (
+            f"当前 PE(TTM) 为 {current_pe:.2f}（公司亏损或 PE 异常），估值分位数没有意义，不构造估值锚"
+        )
+
+    if current_price is None:
+        return None, "现价缺失，无法把分位 PE 换算成分位价"
+    current_price = float(current_price)
+
+    raw_history = pe_block.get("pe_ttm_history") or []
+    positive_history = sorted(float(v) for v in raw_history if v is not None and float(v) > 0)
+    if not positive_history:
+        return None, "PE 历史序列中没有有效（正值）样本，无法计算分位数"
+
+    days_used = len(positive_history)
+    pe25 = _percentile(positive_history, 25)
+    pe75 = _percentile(positive_history, 75)
+    rank = _percentile_rank(positive_history, current_pe)
+
+    price_low = current_price * (pe25 / current_pe)
+    price_high = current_price * (pe75 / current_pe)
+
+    val = pricing.valuation_anchor(price_low, price_high)
+
+    if days_used >= PE_PERCENTILE_TRADING_DAYS_5Y:
+        coverage = f"{days_used} 个交易日"
+    else:
+        coverage = (
+            f"{days_used} 个交易日（不足五年所需的约 {PE_PERCENTILE_TRADING_DAYS_5Y} 个交易日，"
+            "本次按现有天数计算，不冒充完整五年分位）"
+        )
+
+    val["formula"] = (
+        f"当前 PE(TTM) {current_pe:.2f}（处于历史 {rank:.1f} 分位），历史 {coverage} 中 "
+        f"25 分位 PE {pe25:.2f}、75 分位 PE {pe75:.2f}，按现价 {current_price:.2f} × "
+        f"(分位 PE / 当前 PE) 换算得 [{price_low:.2f}, {price_high:.2f}]"
+    )
+    val["meta"] = {
+        "current_pe_ttm": round(current_pe, 2),
+        "current_pe_percentile": round(rank, 1),
+        "pe25": round(pe25, 2),
+        "pe75": round(pe75, 2),
+        "days_used": days_used,
+        "days_required_for_5y": PE_PERCENTILE_TRADING_DAYS_5Y,
+        "source": pe_block.get("source"),
+        "fetched_at": pe_block.get("fetched_at"),
+    }
+    return val, None
+
+
 def derive_timing_dims(tech: dict) -> dict:
     dims = {}
     close = tech.get("last_close")
@@ -389,13 +491,21 @@ def run(raw: dict) -> dict:
             resistance = max(closes[-60:]) if len(closes) >= 20 else None
             last = tech.get("last_close")
             boll = tech.get("boll") or {}
-            val = pricing.valuation_anchor(last * 0.85, last * 1.20) if last else None
             tech_anchor = pricing.technical_anchor(tech.get("ma20"), prior_low, boll.get("lower"))
-            if val:
+
+            val, val_reason = derive_valuation_anchor(raw.get("pe_history"), last, market)
+
+            if val is not None:
                 prices["buy_range"] = pricing.buy_range(val, tech_anchor)
-                prices["target"] = pricing.target_price(val["high"], resistance, None)
-                entry = prices["buy_range"]["high"]
-                prices["stop_loss"] = pricing.stop_loss(entry, tech.get("atr14"), prior_low)
+                prices["valuation"] = dict(val.get("meta") or {}, low=val["low"], high=val["high"])
+            else:
+                prices["buy_range"] = pricing.buy_range_technical_only(tech_anchor, val_reason)
+                prices["valuation"] = {"available": False, "reason": val_reason}
+
+            val_high_for_target = val["high"] if val is not None else None
+            prices["target"] = pricing.target_price(val_high_for_target, resistance, None)
+            entry = prices["buy_range"]["high"]
+            prices["stop_loss"] = pricing.stop_loss(entry, tech.get("atr14"), prior_low)
         except pricing.PricingBlocked as exc:
             price_error = str(exc)
 

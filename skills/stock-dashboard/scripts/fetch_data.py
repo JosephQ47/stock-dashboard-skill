@@ -85,6 +85,17 @@ def fetch_one(code: str, client=None) -> dict:
             payload[key] = None
             payload["errors"][key] = f"BUG {type(exc).__name__}: {exc}"
 
+    try:
+        payload["pe_history"] = mod.fetch_pe_history(norm)
+        payload["data_sources"]["pe_history"] = payload["pe_history"].get("source")
+    except Exception as exc:
+        payload["pe_history"] = {
+            "available": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "source": "n/a",
+            "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
     if cn:
         try:
             payload["extras"] = sources_cn.fetch_market_extras(client, norm)

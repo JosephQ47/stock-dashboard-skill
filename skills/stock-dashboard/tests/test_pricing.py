@@ -77,6 +77,27 @@ def test_buy_range_fallback_to_technical_anchor():
     assert r["low"] == 50.0 and r["high"] == 60.0
 
 
+def test_buy_range_technical_only_uses_tech_bounds():
+    tech = {"low": 90.0, "high": 100.0}
+    r = P.buy_range_technical_only(tech, "当前 PE(TTM) 为 -69.73（公司亏损），估值分位数没有意义")
+    assert r["low"] == 90.0 and r["high"] == 100.0
+    assert "估值锚" in r["formula"]
+    assert "亏损" in r["formula"]
+    assert "亏损" in r["note"]
+
+
+def test_buy_range_formula_shows_valuation_derivation_when_present():
+    val = {
+        "low": 80.0, "high": 110.0,
+        "formula": "当前 PE(TTM) 20.00（处于历史 5.0 分位），历史 1220 个交易日 中 25 分位 PE 25.00、75 分位 PE 40.00，按现价 100.00 换算得 [80.00, 110.00]",
+    }
+    tech = {"low": 90.0, "high": 120.0}
+    r = P.buy_range(val, tech)
+    assert "PE(TTM) 20.00" in r["formula"]
+    assert "25 分位 PE 25.00" in r["formula"]
+    assert "技术锚" in r["formula"]
+
+
 def test_target_price_takes_lower_of_valuation_and_resistance():
     r = P.target_price(val_high=150.0, resistance=130.0, eps=10.0)
     assert r["price"] == 130.0

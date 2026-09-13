@@ -102,12 +102,23 @@
 
 ## 5. 估值分位
 
+> A 股：估值锚来自真实的 PE 五年分位换算（`compute.prices.valuation`）。若
+> `valuation.available` 为 `false`（公司当期亏损/PE 异常，或 PE 历史数据未
+> 获取到），本节整体替换为一句原因说明，不得留空、不得用现价百分比顶替。
+
 | 项 | 数值 |
 |---|---|
-| PE（TTM） | {pe或「未获取到」} |
-| PE 五年分位 | {percentile或「当前实现未接入五年历史 PE 序列，估值锚为简化的价格区间近似，非真实分位数」} |
-| 25 分位对应价（估值锚下沿） | {val_low} |
-| 75 分位对应价（估值锚上沿） | {val_high} |
+| PE（TTM） | {valuation.current_pe_ttm 或「未获取到」} |
+| PE 历史分位（当前 PE 所处位置） | {valuation.current_pe_percentile} 分位 |
+| 历史样本天数 | {valuation.days_used} 个交易日（五年基准约 1220 个交易日；{若 days_used < 1220 需写明「不足五年，按实际天数计算」}） |
+| 25 分位 PE / 75 分位 PE | {valuation.pe25} / {valuation.pe75} |
+| 25 分位对应价（估值锚下沿） | {valuation.low} |
+| 75 分位对应价（估值锚上沿） | {valuation.high} |
+| 数据来源 | {valuation.source}（`stock_value_em` 绕开 `HttpClient` 限流器，产生不计数的东财流量） |
+
+> 港股/美股：当前流水线没有五年 PE 历史数据源，本节写「本市场当前无法给出
+> PE 五年分位估值锚，第 8 节买入区间仅基于技术锚」，不得省略这句说明，也不
+> 得用现价百分比冒充估值锚。
 
 > 本 skill 快速看板不跑完整 DCF：现金流折现依赖对未来多年现金流、永续增
 > 长率、折现率的主观假设，不适合嵌入自动化流程，相对估值使用已实现的历史
@@ -153,7 +164,7 @@
 
 | 价位 | 数值 | 推导式 |
 |---|---|---|
-| 买入区间 | {low} ~ {high} | {formula}；若估值锚与技术锚无交集：{note} |
+| 买入区间 | {low} ~ {high} | {formula}；若估值锚与技术锚无交集：{note}；若估值锚缺失（亏损/港股美股无数据源），{formula} 与 {note} 会转为「仅技术锚」的说明，需原样呈现，不得改写成看起来有估值支持的表述 |
 | 目标价 | {price}（隐含 PE {implied_pe}） | {formula} |
 | 止损价 | {price}（方法：{method}） | {formula}；若某方法被舍弃：{note} |
 

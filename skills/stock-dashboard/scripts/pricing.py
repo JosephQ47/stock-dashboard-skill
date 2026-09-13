@@ -23,6 +23,24 @@ def valuation_anchor(pe_percentile_25_price, pe_percentile_75_price) -> dict:
     return {"low": min(a, b), "high": max(a, b)}
 
 
+def buy_range_technical_only(tech: dict, reason: str) -> dict:
+    """估值锚缺失或被阻断（PE 亏损、港股/美股无五年 PE 历史等）时的退化买入区间：
+    只用技术锚构造，绝不回退到「现价百分比」这类伪估值锚。`reason` 必须写清楚
+    估值锚为什么缺失，让读者知道这不是「估值支持了这个区间」，只是技术面的
+    区间。
+    """
+    formula = (
+        f"估值锚缺失（{reason}），买入区间仅取技术锚 "
+        f"[{tech['low']:.2f}, {tech['high']:.2f}]"
+    )
+    return {
+        "low": round(tech["low"], 2),
+        "high": round(tech["high"], 2),
+        "formula": formula,
+        "note": f"估值锚不可用：{reason}。本买入区间不包含基本面估值判断，仅代表技术面支撑/压力位。",
+    }
+
+
 def technical_anchor(ma20, prior_low, boll_lower) -> dict:
     """技术锚：根据移动平均线、结构支撑推导价格区间。
 
@@ -37,10 +55,13 @@ def technical_anchor(ma20, prior_low, boll_lower) -> dict:
 def buy_range(val: dict, tech: dict) -> dict:
     lo = max(val["low"], tech["low"])
     hi = min(val["high"], tech["high"])
-    formula = (
-        f"估值锚 [{val['low']:.2f}, {val['high']:.2f}] 与 "
-        f"技术锚 [{tech['low']:.2f}, {tech['high']:.2f}] 取交集"
-    )
+    # val 可能带一个 formula 字段（来自 compute.derive_valuation_anchor，展示
+    # 当前 PE、分位 PE、历史天数与换算价格的完整推导），有就展示真实推导过程，
+    # 没有就退回到只报区间数字的旧行为，保持对老调用方（测试里直接传
+    # {"low","high"} 的裸字典）的兼容。
+    val_formula = val.get("formula")
+    val_desc = f"估值锚（{val_formula}）" if val_formula else f"估值锚 [{val['low']:.2f}, {val['high']:.2f}]"
+    formula = f"{val_desc}；技术锚 [{tech['low']:.2f}, {tech['high']:.2f}] 取交集"
     if lo <= hi:
         return {"low": round(lo, 2), "high": round(hi, 2), "formula": formula, "note": None}
 

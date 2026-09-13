@@ -210,3 +210,104 @@ def test_run_not_blocked_still_prices_normally():
     # 未阻断时应该正常推导出买入区间，而不是被无条件塞进阻断话术
     assert "buy_range" in result["prices"]
     assert "数据被阻断" not in (result["matrix"].get("conflict") or "")
+
+
+# ---- derive_valuation_anchor(): PE 五年分位估值锚 ----
+
+def _pe_block(pe_history, current_pe, days_used=None, available=True, reason=None):
+    return {
+        "source": "akshare stock_value_em",
+        "fetched_at": "2026-09-13T00:00:00",
+        "available": available,
+        "reason": reason,
+        "pe_ttm_history": pe_history,
+        "current_pe_ttm": current_pe,
+        "days_used": days_used if days_used is not None else len(pe_history or []),
+    }
+
+
+def test_derive_valuation_anchor_percentile_prices():
+    """current_pe/pe25/pe75 均已知时，25/75 分位价必须等于 current_price * (分位PE/当前PE)。"""
+    history = [float(x) for x in range(1, 101)]  # 1..100，25 分位=25.75，75 分位=75.25
+    pe_block = _pe_block(history, current_pe=50.0)
+    val, reason = C.derive_valuation_anchor(pe_block, current_price=100.0, market="CN_SH")
+    assert reason is None
+    assert val is not None
+    expected_low = 100.0 * (25.75 / 50.0)
+    expected_high = 100.0 * (75.25 / 50.0)
+    assert val["low"] == pytest.approx(expected_low)
+    assert val["high"] == pytest.approx(expected_high)
+    # formula 必须能核对算术：当前 PE、分位 PE、天数、结果价格都要出现
+    assert "50.00" in val["formula"]
+    assert "25.75" in val["formula"] or "25.7" in val["formula"]
+    assert f"{expected_low:.2f}" in val["formula"]
+
+
+def test_derive_valuation_anchor_short_history_reports_days_used():
+    """历史不足五年（1220 个交易日）时，如实报告实际天数，并注明不足五年。"""
+    history = [10.0, 12.0, 14.0, 16.0, 18.0]  # 仅 5 天
+    pe_block = _pe_block(history, current_pe=14.0)
+    val, reason = C.derive_valuation_anchor(pe_block, current_price=100.0, market="CN_SH")
+    assert reason is None
+    assert val is not None
+    assert "5 个交易日" in val["formula"]
+    assert "不足五年" in val["formula"]
+    assert val["meta"]["days_used"] == 5
+
+
+def test_derive_valuation_anchor_negative_pe_blocked():
+    """亏损（PE 为负）不得产生估值锚，必须给出明确原因。"""
+    pe_block = _pe_block([10.0, 12.0, -5.0], current_pe=-69.73)
+    val, reason = C.derive_valuation_anchor(pe_block, current_price=15.0, market="CN_SH")
+    assert val is None
+    assert reason is not None
+    assert "-69.73" in reason
+    assert "亏损" in reason or "异常" in reason
+
+
+def test_derive_valuation_anchor_zero_pe_blocked():
+    pe_block = _pe_block([10.0, 12.0, 14.0], current_pe=0.0)
+    val, reason = C.derive_valuation_anchor(pe_block, current_price=15.0, market="CN_SH")
+    assert val is None
+    assert reason is not None
+
+
+def test_derive_valuation_anchor_us_market_omitted_not_faked():
+    """港股/美股没有五年 PE 历史数据源，必须省略估值锚，而不是用现价百分比冒充。"""
+    val, reason = C.derive_valuation_anchor({"available": False}, current_price=100.0, market="US")
+    assert val is None
+    assert "港股/美股" in reason
+    assert "五年" in reason
+
+
+def test_derive_valuation_anchor_unavailable_pe_block():
+    val, reason = C.derive_valuation_anchor(
+        {"available": False, "reason": "akshare 请求失败"}, current_price=100.0, market="CN_SH"
+    )
+    assert val is None
+    assert "akshare 请求失败" in reason
+
+
+def test_derive_valuation_anchor_missing_current_price():
+    pe_block = _pe_block([10.0, 12.0, 14.0], current_pe=12.0)
+    val, reason = C.derive_valuation_anchor(pe_block, current_price=None, market="CN_SH")
+    assert val is None
+    assert "现价" in reason
+
+
+def test_run_falls_back_to_technical_anchor_when_valuation_blocked():
+    """估值锚被阻断（亏损）时，买入区间必须退化为纯技术锚，而不是整体不给价位。"""
+    raw = {
+        "code": "600793", "market": "CN_SH", "currency": "CNY",
+        "completeness": 1.0, "blocked": False, "block_reasons": [],
+        "kline": _kline(),
+        "financials": _cn_fin_block(),
+        "pe_history": _pe_block([10.0, 12.0, -5.0], current_pe=-69.73),
+        "data_sources": {"kline": "东财", "financials": "akshare"},
+    }
+    result = C.run(raw)
+    assert "buy_range" in result["prices"]
+    assert result["prices"]["valuation"]["available"] is False
+    assert "亏损" in result["prices"]["valuation"]["reason"]
+    assert "技术锚" in result["prices"]["buy_range"]["formula"]
+    assert "估值锚" in result["prices"]["buy_range"]["note"]
