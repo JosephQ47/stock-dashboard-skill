@@ -25,7 +25,35 @@ def _is_cn(market) -> bool:
 
 def fetch_one(code: str, client=None) -> dict:
     client = client or HttpClient()
-    norm = normalize(code)
+    fetched_at = datetime.now().isoformat(timespec="seconds")
+
+    try:
+        norm = normalize(code)
+    except Exception as exc:
+        return {
+            "code": code,
+            "raw": code,
+            "market": None,
+            "currency": None,
+            "fetched_at": fetched_at,
+            "data_sources": {},
+            "errors": {"normalize": f"{type(exc).__name__}: {exc}"},
+            "quote": None,
+            "kline": None,
+            "financials": None,
+            "extras": {
+                "available": False,
+                "reason": "代码无法识别，未发起任何取数",
+                "source": "market.normalize",
+                "fetched_at": fetched_at,
+            },
+            "completeness": 0.0,
+            "blocked": True,
+            "block_reasons": ["代码无法识别，市场未判定"],
+            "missing": ["quote", "kline", "financials"],
+            "manual_check": None,
+        }
+
     cn = _is_cn(norm["market"])
     mod = sources_cn if cn else sources_hk_us
 
@@ -34,7 +62,7 @@ def fetch_one(code: str, client=None) -> dict:
         "raw": norm["raw"],
         "market": norm["market"].value,
         "currency": norm["currency"],
-        "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        "fetched_at": fetched_at,
         "data_sources": {},
         "errors": {},
     }
@@ -48,27 +76,59 @@ def fetch_one(code: str, client=None) -> dict:
             value = fn()
             payload[key] = value
             payload["data_sources"][key] = value.get("source")
-        except (SourceDown, Exception) as exc:
+        except SourceDown as exc:
             payload[key] = None
-            payload["errors"][key] = f"{type(exc).__name__}: {str(exc)[:100]}"
+            payload["errors"][key] = f"{type(exc).__name__}: {exc}"
+        except Exception as exc:
+            # 非 SourceDown 的异常（例如我们自己代码里的 bug、格式解析错误）与真实数据源
+            # 故障用不同前缀区分，读者不应把两者混为一谈。
+            payload[key] = None
+            payload["errors"][key] = f"BUG {type(exc).__name__}: {exc}"
 
     if cn:
         try:
             payload["extras"] = sources_cn.fetch_market_extras(client, norm)
         except Exception as exc:
-            payload["extras"] = {"available": False, "reason": f"{type(exc).__name__}"}
+            payload["extras"] = {
+                "available": False,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "source": "akshare 东财源",
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+            }
     else:
-        payload["extras"] = {"available": False, "reason": "A 股专属项，当前市场不适用"}
+        payload["extras"] = {
+            "available": False,
+            "reason": "A 股专属项，当前市场不适用",
+            "source": "n/a",
+            "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        }
 
     payload["completeness"] = completeness(payload)
+
+    quote_missing = not payload.get("quote")
+    financials_val = payload.get("financials")
+    financials_unavailable = not financials_val or not financials_val.get("available")
+
+    block_reasons = []
     if payload["completeness"] < COMPLETENESS_FLOOR:
+        block_reasons.append(
+            f"完备率 {payload['completeness']:.0%} 低于阻断线 {COMPLETENESS_FLOOR:.0%}"
+        )
+    if quote_missing:
+        block_reasons.append("行情缺失：现价、买入区间、目标价与止损价均无法给出")
+    if financials_unavailable:
+        block_reasons.append("财务数据缺失：红旗与否决条件无法评估")
+
+    if block_reasons:
         payload["blocked"] = True
+        payload["block_reasons"] = block_reasons
         payload["missing"] = [k for k in ("quote", "kline", "financials") if not payload.get(k)]
         payload["manual_check"] = (
             "http://www.cninfo.com.cn" if cn else "https://www.sec.gov/edgar/searchedgar/companysearch"
         )
     else:
         payload["blocked"] = False
+        payload["block_reasons"] = []
     return payload
 
 
@@ -100,16 +160,19 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     client = HttpClient()
 
+    any_blocked = False
     for code in args.codes:
         payload = fetch_one(code, client)
-        path = out_dir / f"{payload['code']}_raw.json"
+        if payload["blocked"]:
+            any_blocked = True
+        path = out_dir / f"{payload['code'] or code}_raw.json"
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        status = "完备率不足，已阻断" if payload["blocked"] else "就绪"
+        status = "已阻断（" + "；".join(payload.get("block_reasons", [])) + "）" if payload["blocked"] else "就绪"
         print(f"{payload['code']} 完备率 {payload['completeness']:.0%} {status} -> {path}")
         if payload["errors"]:
             for k, v in payload["errors"].items():
                 print(f"  {k} 失败: {v}")
-    return 0
+    return 1 if any_blocked else 0
 
 
 if __name__ == "__main__":

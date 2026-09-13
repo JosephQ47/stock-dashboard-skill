@@ -33,36 +33,46 @@ def fetch_quote(client, norm) -> dict:
         except SourceDown:
             pass
 
-    import yfinance as yf
+    try:
+        import yfinance as yf
 
-    t = yf.Ticker(_yf_symbol(norm))
-    hist = t.history(period="5d")
-    if len(hist) == 0:
-        raise SourceDown("yfinance 无行情返回")
-    return {
-        "price": float(hist["Close"].iloc[-1]),
-        "name": _yf_symbol(norm),
-        "source": "yfinance",
-        "fetched_at": _now(),
-    }
+        t = yf.Ticker(_yf_symbol(norm))
+        hist = t.history(period="5d")
+        if len(hist) == 0:
+            raise SourceDown("yfinance 无行情返回")
+        return {
+            "price": float(hist["Close"].iloc[-1]),
+            "name": _yf_symbol(norm),
+            "source": "yfinance",
+            "fetched_at": _now(),
+        }
+    except SourceDown:
+        raise
+    except Exception as exc:
+        raise SourceDown(f"yfinance 连接失败: {type(exc).__name__}: {exc}") from exc
 
 
 def fetch_kline(client, norm, days=250) -> dict:
-    import yfinance as yf
+    try:
+        import yfinance as yf
 
-    period = "2y" if days > 250 else "1y"
-    hist = yf.Ticker(_yf_symbol(norm)).history(period=period)
-    if len(hist) == 0:
-        raise SourceDown("yfinance 无 K 线返回")
-    return {
-        "dates": [d.strftime("%Y-%m-%d") for d in hist.index],
-        "high": [float(v) for v in hist["High"]],
-        "low": [float(v) for v in hist["Low"]],
-        "close": [float(v) for v in hist["Close"]],
-        "volume": [float(v) for v in hist["Volume"]],
-        "source": "yfinance",
-        "fetched_at": _now(),
-    }
+        period = "2y" if days > 250 else "1y"
+        hist = yf.Ticker(_yf_symbol(norm)).history(period=period)
+        if len(hist) == 0:
+            raise SourceDown("yfinance 无 K 线返回")
+        return {
+            "dates": [d.strftime("%Y-%m-%d") for d in hist.index],
+            "high": [float(v) for v in hist["High"]],
+            "low": [float(v) for v in hist["Low"]],
+            "close": [float(v) for v in hist["Close"]],
+            "volume": [float(v) for v in hist["Volume"]],
+            "source": "yfinance",
+            "fetched_at": _now(),
+        }
+    except SourceDown:
+        raise
+    except Exception as exc:
+        raise SourceDown(f"yfinance 连接失败: {type(exc).__name__}: {exc}") from exc
 
 
 def fetch_financials(norm) -> dict:
