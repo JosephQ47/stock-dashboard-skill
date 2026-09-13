@@ -13,11 +13,21 @@ class PricingBlocked(Exception):
 
 
 def valuation_anchor(pe_percentile_25_price, pe_percentile_75_price) -> dict:
+    """估值锚：根据 PE 分位数推导价格区间。
+
+    返回中间值，不直接呈现给用户，不需要公式。
+    """
+    if pe_percentile_25_price is None or pe_percentile_75_price is None:
+        raise PricingBlocked("PE 分位数价格缺失，无法构造估值锚")
     a, b = float(pe_percentile_25_price), float(pe_percentile_75_price)
     return {"low": min(a, b), "high": max(a, b)}
 
 
 def technical_anchor(ma20, prior_low, boll_lower) -> dict:
+    """技术锚：根据移动平均线、结构支撑推导价格区间。
+
+    返回中间值，不直接呈现给用户，不需要公式。
+    """
     vals = [float(v) for v in (ma20, prior_low, boll_lower) if v is not None]
     if not vals:
         raise PricingBlocked("MA20、前低、布林下轨全部缺失，无法构造技术锚")
@@ -37,13 +47,19 @@ def buy_range(val: dict, tech: dict) -> dict:
     val_mid = (val["low"] + val["high"]) / 2
     tech_mid = (tech["low"] + tech["high"]) / 2
     if val_mid <= tech_mid:
-        chosen, name = val, "估值锚"
+        chosen = val
+        note = (
+            "估值锚与技术锚无交集，取更靠下的估值锚。"
+            "等待更深的技术回调以与基本面对齐，这是保守的做法。"
+            "两者背离说明价格与基本面判断不一致，需人工复核"
+        )
     else:
-        chosen, name = tech, "技术锚"
-    note = (
-        f"估值锚与技术锚无交集，取更靠下的{name}区间。"
-        f"两者背离说明价格与基本面判断不一致，需人工复核"
-    )
+        chosen = tech
+        note = (
+            "估值锚与技术锚无交集，取更靠下的技术锚。"
+            "价格已跌破技术支撑但基本面评估（基于滞后财务数据）未同步。"
+            "在趋势不确定时介入，两者背离说明价格与基本面判断不一致，需人工复核"
+        )
     return {
         "low": round(chosen["low"], 2),
         "high": round(chosen["high"], 2),
@@ -61,7 +77,7 @@ def target_price(val_high, resistance, eps) -> dict:
     name, price = min(candidates, key=lambda x: x[1])
     parts = " 与 ".join(f"{n} {v:.2f}" for n, v in candidates)
     formula = f"{parts} 取较低者，得 {name} {price:.2f}"
-    implied_pe = round(price / float(eps), 2) if eps else None
+    implied_pe = round(price / float(eps), 2) if eps is not None and float(eps) > 0 else None
     return {"price": round(price, 2), "formula": formula, "implied_pe": implied_pe}
 
 
@@ -70,10 +86,16 @@ def stop_loss(entry, atr14, prior_low) -> dict:
     options = []
     if atr14 is not None:
         p = entry - ATR_MULTIPLE * float(atr14)
-        options.append(("ATR", p, f"入场 {entry:.2f} 减 {ATR_MULTIPLE:g} 倍 ATR14 {float(atr14):.2f}"))
+        if p < entry:
+            options.append(("ATR", p, f"入场 {entry:.2f} 减 {ATR_MULTIPLE:g} 倍 ATR14 {float(atr14):.2f}"))
+        else:
+            raise PricingBlocked(f"ATR14 过小（{float(atr14):.2f}），计算得止损 {p:.2f} 不低于入场 {entry:.2f}，无法形成有效止损")
     if prior_low is not None:
         p = float(prior_low) * (1 - STRUCTURE_BUFFER)
-        options.append(("结构", p, f"前低 {float(prior_low):.2f} 下方 {STRUCTURE_BUFFER:.0%}"))
+        if p < entry:
+            options.append(("结构", p, f"前低 {float(prior_low):.2f} 下方 {STRUCTURE_BUFFER:.0%}"))
+        else:
+            raise PricingBlocked(f"前低 {float(prior_low):.2f} 高于入场 {entry:.2f}，结构止损无法有效保护头寸，需等前低回落至入场下方")
     if not options:
         raise PricingBlocked("ATR14 与前低均缺失，无法推导止损价")
     method, price, formula = max(options, key=lambda x: x[1])
